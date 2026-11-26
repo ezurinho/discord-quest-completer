@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.0.0 — 2026-11-26
+
+Every render since 2.6.0 threw, and this is the fix.
+
+- `cardFor` read `supported` six lines before declaring it. That is a temporal dead
+  zone error, not a syntax error, so `node --check` was happy and the panel still
+  looked ready: pressing Start logged `[dqc] ReferenceError: Cannot access 'supported'
+  before initialization` and then nothing. 2.6.0 through 2.9.0 were broken the moment
+  the quest list was drawn.
+- The flag now comes from `isSupported(task)`, declared above its first use.
+- `tools/smoke.js` boots the real bundle in a Node VM with a stub DOM and fake webpack
+  modules, presses Start, and asserts a video post plus an enrolment. `npm run check`
+  runs it, so a crash of this shape cannot ship again.
+
 ## 2.9.0 — 2026-11-26
 
 Small things that make the traffic look less like a script.

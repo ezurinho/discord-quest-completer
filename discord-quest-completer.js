@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 2.9.0
+ * Discord Quest Completer 3.0.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '2.9.0';
+  const VERSION = '3.0.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -333,20 +333,24 @@
     return '· ~' + Math.ceil(seconds / 60) + ' min left';
   }
 
+  // Streams need a real Go Live plus someone else in the channel, and achievements
+  // are validated by the game or the activity backend. Offering them a checkbox
+  // would promise work the client cannot do.
+  function isSupported(task) {
+    return Boolean(task) && (task.type === 'VIDEO' || task.type === 'GAME');
+  }
+
   function cardFor(quest) {
     const task = taskOf(quest);
     const done = Boolean(quest.userStatus && quest.userStatus.completedAt);
     const live = state.running && !done && task && task.type === 'VIDEO' && state.selected.has(quest.id);
+    const supported = isSupported(task);
     const value = task ? questValue(quest, task.key) : 0;
     const target = task ? task.target : 0;
     const pct = target ? Math.min(100, Math.round((value / target) * 100)) : done ? 100 : 0;
-    const label = blocked.has(quest.id) ? 'UNAVAILABLE' : !supported && !done ? 'NOT AUTOMATABLE' : done ? 'DONE' : live ? 'RUNNING' : quest.userStatus && quest.userStatus.enrolledAt ? 'QUEUE' : 'NOT JOINED';
+    const label = blocked.has(quest.id) ? 'UNAVAILABLE' : !isSupported(task) && !done ? 'NOT AUTOMATABLE' : done ? 'DONE' : live ? 'RUNNING' : quest.userStatus && quest.userStatus.enrolledAt ? 'QUEUE' : 'NOT JOINED';
     const showEta = live || (state.running && !done && !blocked.has(quest.id) && Boolean(quest.userStatus && quest.userStatus.enrolledAt));
     const icon = task && task.type === 'VIDEO' ? ICON.video : task && (task.type === 'GAME' || task.type === 'ACTIVITY') ? ICON.game : ICON.clock;
-    // Streams need a real Go Live plus someone else in the channel, and achievements
-    // are validated by the game or the activity backend. Offering them a checkbox
-    // would promise work the client cannot do.
-    const supported = Boolean(task) && (task.type === 'VIDEO' || task.type === 'GAME');
     const card = document.createElement('div');
     card.className = 'dqc-card' + (done ? ' done' : live ? ' live' : '');
     card.innerHTML = '<input type="checkbox" class="dqc-pick" data-id="' + quest.id + '"' +

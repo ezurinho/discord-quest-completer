@@ -74,12 +74,16 @@ is saved, so reloading during one does not restart the punishment.
 ## Development
 
 ```sh
-npm run check   # syntax, version agreement, paste-safety and regression invariants
+npm run check   # syntax, invariants, then the bundle runs against a stub client
 ```
 
 The checker asserts the lessons this repo paid for: no hand-built game dispatch, the
 sealed attribution present, a single video cadence, Map-shaped task configs, the moved
 application id, and the re-paste guard.
+
+`tools/smoke.js` boots the real bundle in a Node VM with a stub DOM and fake webpack
+modules, presses Start, and asserts that a video quest posts progress and an unenrolled
+quest posts an enrolment. It caught a crash that `node --check` could not see.
 
 A release is a tag plus `discord-quest-completer.js`. The version lives in
 `package.json` and the `const VERSION` line; `npm run check` fails when they disagree.

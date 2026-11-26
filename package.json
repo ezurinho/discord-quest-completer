@@ -1,10 +1,10 @@
 {
   "name": "discord-quest-completer",
-  "version": "2.9.0",
+  "version": "3.0.0",
   "private": true,
   "description": "Paste-in-the-console script that completes Discord Quests from the desktop app",
   "scripts": {
-    "check": "node tools/check.js"
+    "check": "node tools/check.js && node tools/smoke.js"
   },
   "license": "MIT"
 }
