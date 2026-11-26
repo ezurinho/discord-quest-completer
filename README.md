@@ -1,9 +1,7 @@
 # Discord Quest Completer
 
-A script you paste into the Discord desktop app's console to finish Quests: watch-video
-quests, game quests, and the ones the client already reports as done.
-
-No Tampermonkey, no extension, no install. It is one file.
+A script you paste into the Discord desktop app's console to finish Quests. One file,
+no extension, no install.
 
 ## Use it
 
@@ -11,45 +9,77 @@ No Tampermonkey, no extension, no install. It is one file.
 2. Click the **Console** tab.
 3. Open [`discord-quest-completer.js`](https://github.com/ezurinho/discord-quest-completer/releases/latest/download/discord-quest-completer.js) and copy the whole file.
 4. Paste it into the console and press **Enter**.
-5. The panel appears in the corner: press **Start**.
+5. The panel appears in the corner: tick what you want and press **Start**.
 
 **Chromium blocks pasting into the console the first time.** It prints
 `Warning: Don't paste code...` above the prompt. Type `allow pasting` and press Enter,
 then paste normally. Discord's own "Hold up!" message is the client's warning about
 self-XSS, not an error from this script.
 
-Pasting a second time replaces the panel instead of starting a second copy, which would
-double every progress request.
+Pasting a second time stops the previous copy and replaces the panel. Two live copies
+would double every progress request.
 
 ## What it does
 
-- **WATCH_VIDEO**: posts `/quests/<id>/video-progress` with `timestamp` advancing 5 s
-  every 900 ms until the target is reached.
-- **PLAY_ON_DESKTOP / PLAY_ACTIVITY**: dispatches `RUNNING_GAMES_CHANGE` with a stand-in
-  game every 15 s, the same event the client fires when an activity starts.
-- **Enroll**: posts `/quests/<id>/enroll` for quests that are not accepted yet.
-- **Stream quests** are left alone on purpose: faking a live stream is a louder kind of
-  automation and needs a real voice connection.
+| Task | How |
+|---|---|
+| `WATCH_VIDEO` | `POST /quests/<id>/video-progress` with fractional `timestamp`, every 7-9.5 s, one quest at a time |
+| `PLAY_ON_DESKTOP` | patches `RunningGameStore.getRunningGames` and `getGameForPID` with a stand-in process; Discord's own heartbeat does the rest |
+| Enrol | `POST /quests/<id>/enroll` with the sealed attribution blob the client sends |
+| Claim | `POST /quests/<id>/claim-reward` for completed quests, once per session |
 
-It finds those pieces through `webpackChunkdiscord_app`, so it uses the client's own
-dispatcher and HTTP client. If Discord renames a module, the log says `modules not found`
-instead of failing silently.
+`STREAM` and `ACHIEVEMENT` quests are labelled **NOT AUTOMATABLE**: a stream needs a
+real Go Live with another person in the channel, and achievements are validated by the
+game or the activity backend rather than the client.
+
+Modules are found by a prototype method (`getQuest`, `flushWaitQueue`, `getRunningGames`,
+`.post`) instead of by name, so a renamed export does not break the run.
+
+## When something does not move
+
+Press `?` in the panel header. It prints what the client holds:
+
+```
+diagnose: quests, questEnrollmentBlockedUntil, questsMap
+diagnose: blocked until never
+diagnose: 49 quests · 4 video · 2 game · 43 other · 24 joined · 3 done
+diagnose: Firefox Browser · keys WATCH_VIDEO · app none
+```
+
+Read it in this order:
+
+1. **`blocked until <date>`** - Discord stopped accepting enrolments on the account.
+   Nothing here can fix that; wait for the date.
+2. **`app none`** on a game quest - the application id is missing, so the stand-in has
+   nothing to be. That quest cannot advance.
+3. **`joined` low** - the quests are not accepted on the account. The log line
+   `cannot join: <name>` comes with a 404 from `/enroll`.
+4. **`Discord is not accepting progress`** - four posts in a row did not move the
+   stored value. The endpoint is refusing them without saying so.
+
+Rate limits: a 429 pauses every request for the `retry_after` window and the cooldown
+is saved, so reloading during one does not restart the punishment.
 
 ## Limits worth knowing
 
 - Automating your account breaks Discord's Terms of Service. Flagging or termination is
   a real outcome, not a hypothetical.
-- The panel must stay open and the app must stay running; the quests advance while the
-  script is started.
+- The app must stay running and the panel must stay open; progress advances only while
+  **Start** is on.
 - Nothing here reads, stores or sends your token. Requests go through the client's own
   HTTP module, as you.
-- Reopening DevTools after a quit means pasting again.
+- Game quests are the weak path: the stand-in is not the complete process object the
+  client builds, so some quests will not see it.
 
 ## Development
 
 ```sh
-npm run check   # syntax, version agreement, paste-safety invariants
+npm run check   # syntax, version agreement, paste-safety and regression invariants
 ```
+
+The checker asserts the lessons this repo paid for: no hand-built game dispatch, the
+sealed attribution present, a single video cadence, Map-shaped task configs, the moved
+application id, and the re-paste guard.
 
 A release is a tag plus `discord-quest-completer.js`. The version lives in
 `package.json` and the `const VERSION` line; `npm run check` fails when they disagree.

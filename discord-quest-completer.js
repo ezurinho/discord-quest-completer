@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 2.7.0
+ * Discord Quest Completer 2.8.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '2.7.0';
+  const VERSION = '2.8.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -477,6 +477,16 @@
       await enqueue('/quests/' + quest.id + '/claim-reward', enrollBody(quest));
       log('claimed ' + (taskOf(quest) ? taskOf(quest).name : quest.id), 'ok');
     } catch (err) {
+      // One retry: a claim that lost a race with the completion heartbeat is worth
+      // another try, a 404 is not.
+      if (err && err.status !== 404) {
+        try {
+          await sleep(3000);
+          await enqueue('/quests/' + quest.id + '/claim-reward', enrollBody(quest));
+          log('claimed ' + (taskOf(quest) ? taskOf(quest).name : quest.id) + ' (second try)', 'ok');
+          return;
+        } catch (again) { /* fall through to the report */ }
+      }
       log('claim failed: ' + errorText(err), 'err');
     }
   }
@@ -592,6 +602,8 @@
       return;
     }
     state.running = true;
+    sent.clear();
+    stalls.clear();
     traffic.post = mods.api.post.bind(mods.api);
     state.mods = mods;
     patchRunStore(mods);

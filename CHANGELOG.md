@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.8.0 — 2026-11-26
+
+Documentation that matches the code, and regressions that stay dead.
+
+- README rewritten: the old one still promised 5 s of video every 900 ms and a
+  `RUNNING_GAMES_CHANGE` dispatch, both removed versions ago. It now documents the real
+  cadence, the sealed enrolment body, auto-claim, the picker and the `?` diagnosis.
+- New troubleshooting section: how to read `blocked until`, `app none`, `joined` and
+  `Discord is not accepting progress`, in that order.
+- `npm run check` now asserts the eight fixes as regression invariants, so a later edit
+  cannot quietly bring back the game dispatch or drop the sealed blob.
+- A failed claim is retried once after 3 s; a 404 is not.
+
 ## 2.7.0 — 2026-11-26
 
 Ask the client what it holds.

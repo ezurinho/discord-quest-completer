@@ -20,6 +20,19 @@ if (!/^\}\)\(\);$/.test(trimmed[trimmed.length - 1] || '')) failures.push('the I
 if (!/document\.getElementById\('dqc-panel'\)/.test(source)) failures.push('re-pasting must remove the old panel');
 if (/localStorage\.setItem\('token/.test(source)) failures.push('stores a token');
 if (/window\.webpackChunkdiscord_app\s*=/.test(source)) failures.push('overwrites the webpack global');
+const invariants = [
+  ['no hand-built game dispatch', 'RUNNING_GAMES_CHANGE'],
+  ['sends the sealed attribution', 'traffic_metadata_sealed'],
+  ['stops a previous instance', '__dqcStop'],
+  ['single video cadence', 'nextVideoQuest'],
+  ['surfaces an enrolment block', 'questEnrollmentBlockedUntil'],
+  ['handles Map-shaped tasks', 'taskKeysOf'],
+  ['reads the moved application id', 'applications'],
+  ['diagnostics button', 'diagnose']
+];
+for (const [name, needle] of invariants) {
+  if (source.indexOf(needle) < 0) failures.push('regression: ' + name);
+}
 if (lines.length > 700) failures.push('grew past 700 lines: keep it pasteable and readable');
 
 try {
