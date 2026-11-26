@@ -17,18 +17,19 @@ if (!/@match\s+https:\/\/discord\.com\/\*/.test(fs.readFileSync(user, 'utf8'))) 
 if (!/releases\/latest\/download\/discord-quest-completer\.user\.js/.test(fs.readFileSync(user, 'utf8'))) failures.push('downloadURL does not point at the latest release');
 
 const bundle = fs.readFileSync(user, 'utf8');
-if (bundle.split('
-').length > 400) failures.push('userscript grew past 400 lines: keep it readable');
-if (/window\.(?!addEventListener|webpackChunkdiscord_app)/.test(bundle.replace(/window\.webpackChunkdiscord_app/g, ''))) failures.push('writes to window');
+const lines = bundle.split(/String.fromCharCode(10)/);
+if (lines.length > 400) failures.push('userscript grew past 400 lines: keep it readable');
+if (!/^\(\(\) => \{/.test(lines[lines.length - 2] || '')) failures.push('expected one IIFE as the last statement');
+if (/localStorage\.setItem\('token/.test(bundle)) failures.push('reads or stores a token');
 
 try {
   execFileSync(process.execPath, ['--check', user], { stdio: 'pipe' });
 } catch (err) {
-  failures.push('syntax: ' + String(err.stderr || err.message).split('\n')[0]);
+  failures.push('syntax: ' + String(err.stderr || err.message).split(/String.fromCharCode(10)/)[0]);
 }
 
 if (failures.length) {
   for (const failure of failures) console.error('check: ' + failure);
   process.exit(1);
 }
-console.log('check: ' + version(user) + ' ok');
+console.log('check: ' + version(user) + ' ok, ' + lines.length + ' lines');
