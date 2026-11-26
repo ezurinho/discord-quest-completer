@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 2.1.0
+ * Discord Quest Completer 2.2.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '2.1.0';
+  const VERSION = '2.2.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -89,14 +89,28 @@
     if (!raw) return [];
     return raw instanceof Map ? Array.from(raw.values()) : Object.values(raw);
   }
+  function taskKeysOf(tasks) {
+    return tasks instanceof Map ? Array.from(tasks.keys()) : Object.keys(tasks || {});
+  }
+
+  function taskAt(tasks, key) {
+    return tasks instanceof Map ? tasks.get(key) : tasks && tasks[key];
+  }
+
+  // Discord hands the same payload back as a Map on some builds; Object.keys on a Map
+  // is empty, which read as "quest without tasks" and skipped every one of them.
   function configOf(quest) {
     const config = (quest && quest.config) || {};
-    return config.taskConfig || config.taskConfigV2 || {};
+    const current = config.taskConfigV2;
+    if (current && taskKeysOf(current.tasks).length) return current;
+    const legacy = config.taskConfig;
+    if (legacy && taskKeysOf(legacy.tasks).length) return legacy;
+    return current || legacy || {};
   }
   function taskOf(quest) {
     const config = configOf(quest);
     const tasks = (config && config.tasks) || {};
-    const keys = Object.keys(tasks);
+    const keys = taskKeysOf(tasks);
     if (!keys.length) return null;
     const has = (needle) => keys.find((key) => key.indexOf(needle) >= 0);
     const key = has('PLAY') || has('STREAM') || has('VIDEO') || has('ACTIVITY') || has('WATCH') || keys[0];
@@ -104,7 +118,7 @@
     const messages = (quest.config && quest.config.messages) || {};
     const app = (quest.config && quest.config.application) || {};
     const name = messages.questName || app.name || quest.id;
-    return { key, name, type, target: Number(tasks[key] && tasks[key].target) || 0 };
+    return { key, name, type, target: Number(taskAt(tasks, key) && taskAt(tasks, key).target) || 0 };
   }
   function questValue(quest, key) {
     const progress = quest.userStatus && quest.userStatus.progress;
@@ -337,10 +351,21 @@
     }
   }
 
+  // Discord seals an attribution blob per quest and echoes it back on every enroll and
+  // claim. Our old body sent `{ location: 1 }` and nothing else, which is why every
+  // enroll answered 404 on a quest the client would have accepted.
+  function sealedFor(quest) {
+    return (quest && quest.trafficMetadataSealed) || null;
+  }
+
+  function enrollBody(quest) {
+    return { platform: 0, location: 11, is_targeted: false, metadata_sealed: null, traffic_metadata_sealed: sealedFor(quest) };
+  }
+
   async function enroll(quest) {
     if (quest.userStatus && quest.userStatus.enrolledAt) return;
     try {
-      await enqueue('/quests/' + quest.id + '/enroll', { location: 1 });
+      await enqueue('/quests/' + quest.id + '/enroll', enrollBody(quest));
       log('joined ' + (taskOf(quest) ? taskOf(quest).name : quest.id), 'ok');
     } catch (err) {
       // 404 here means the account cannot join it at all: expired, region-locked,
@@ -375,6 +400,15 @@
       } else {
         log('video error: ' + errorText(err), 'err');
       }
+    }
+  }
+
+  async function claim(quest) {
+    try {
+      await enqueue('/quests/' + quest.id + '/claim-reward', enrollBody(quest));
+      log('claimed ' + (taskOf(quest) ? taskOf(quest).name : quest.id), 'ok');
+    } catch (err) {
+      log('claim failed: ' + errorText(err), 'err');
     }
   }
 
@@ -480,12 +514,19 @@
     state.quests = allQuests(mods);
     render();
     log(state.quests.length + ' quests on this account');
+    const blockedUntil = mods.questStore && mods.questStore.questEnrollmentBlockedUntil;
+    if (blockedUntil && new Date(blockedUntil).getTime() > Date.now()) {
+      log('Discord blocked enrolment on this account until ' + new Date(blockedUntil).toLocaleString(), 'err');
+    }
     // Nothing here waits for the network. The old version enrolled every quest first
     // and only then logged anything, so one request the client never settled hid the
     // whole run behind an empty panel. Enrolment is now fire-and-forget and the
     // store refresh picks up the result.
     for (const quest of state.quests) {
-      if (quest.userStatus && quest.userStatus.completedAt) continue;
+      if (quest.userStatus && quest.userStatus.completedAt) {
+        if (!quest.userStatus.claimedAt) claim(quest).catch(() => {});
+        continue;
+      }
       const task = taskOf(quest);
       if (!task) continue;
       const value = questValue(quest, task.key);

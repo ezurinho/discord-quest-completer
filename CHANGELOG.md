@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.2.0 — 2026-11-26
+
+The requests now carry what Discord's own client sends.
+
+Source: `nyxxbit/discord-quest-completer` (`index.js` v4.11.5), whose comments document
+this against the live client. Two things were missing from every call we made:
+
+- **`traffic_metadata_sealed`**: a per-quest blob the server issues with the quest list
+  and the client echoes back on `enroll` and `claim-reward`. Bodies are now
+  `{ platform: 0, location: 11, is_targeted: false, metadata_sealed: null,
+  traffic_metadata_sealed: <quest.trafficMetadataSealed> }`, which is what the 404s were
+  about: `{ location: 1 }` is not the shape the client sends.
+- **Tasks delivered as a `Map`**: `Object.keys()` on a Map is empty, so quests read as
+  "no tasks" and were skipped without a line in the log. `taskKeysOf`/`taskAt` handle
+  both shapes, and `taskConfigV2` wins when it carries tasks.
+
+Also new:
+
+- **Auto-claim**: a completed quest without `claimedAt` posts `claim-reward`, so the
+  rewards of the three you finished stop sitting there unclaimed.
+- **Enrolment block**: `questStore.questEnrollmentBlockedUntil` is logged with its date
+  when set. That is Discord saying it stopped accepting enrolments on the account, and
+  no retry will change it.
+
 ## 2.1.0 — 2026-11-26
 
 Nothing waits for enrolment any more.
