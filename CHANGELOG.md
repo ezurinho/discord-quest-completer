@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.4.0 — 2026-11-26
+
+Progress stops going backwards.
+
+- The video loop worked from the snapshot taken when Start was pressed, so
+  `questValue` returned the same number for up to a minute and Discord kept receiving
+  the same `timestamp`. The store is re-read before every tick, and the highest value
+  sent is remembered as a floor.
+- Completed quests are claimed during the run, not only at the start, and each quest is
+  claimed once per session.
+
 ## 2.3.0 — 2026-11-26
 
 Stop crashing Discord's own handlers.

@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 2.3.0
+ * Discord Quest Completer 2.4.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '2.3.0';
+  const VERSION = '2.4.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -381,7 +381,7 @@
 
   async function videoTick(quest, task) {
     if (Date.now() < pauseUntil || blocked.has(quest.id)) return;
-    const current = questValue(quest, task.key);
+    const current = Math.max(questValue(quest, task.key), sent.get(quest.id) || 0);
     if (current >= task.target) {
       log('done ' + task.name, 'ok');
       stopVideo(quest.id);
@@ -391,7 +391,8 @@
     const next = Math.min(task.target, Number((current + step).toFixed(6)));
     try {
       await enqueue('/quests/' + quest.id + '/video-progress', { timestamp: next });
-      log(task.name + ' · ' + next + '/' + task.target + ' s');
+      sent.set(quest.id, next);
+      log(task.name + ' · ' + next.toFixed(1) + '/' + task.target + ' s');
     } catch (err) {
       if (err && err.status === 404) {
         blocked.add(quest.id);
@@ -402,6 +403,8 @@
       }
     }
   }
+
+  const claimed = new Set();
 
   async function claim(quest) {
     try {
@@ -421,6 +424,8 @@
   // One cadence for the whole account, not one per quest: five parallel loops are
   // five times the request rate against the same bucket, which is exactly what
   // earns a 34-minute 429.
+  const sent = new Map();
+
   function nextVideoQuest() {
     const waiting = state.quests.filter((quest) => {
       if (quest.userStatus && quest.userStatus.completedAt) return false;
@@ -438,6 +443,7 @@
     const loop = async () => {
       if (!state.running) return;
       if (Date.now() >= pauseUntil) {
+        state.quests = allQuests(state.mods);
         const quest = nextVideoQuest();
         if (quest) await videoTick(quest, taskOf(quest));
       }
@@ -559,6 +565,12 @@
         const task = taskOf(quest);
         if (task && task.type !== 'VIDEO') pulseGame(mods, quest, task);
         if (task) startVideos();
+      }
+      for (const quest of pending) {
+        if (quest.userStatus && quest.userStatus.completedAt && !quest.userStatus.claimedAt && !claimed.has(quest.id)) {
+          claimed.add(quest.id);
+          claim(quest).catch(() => {});
+        }
       }
       render();
       if (!pending.length) stop();
