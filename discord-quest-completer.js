@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 2.8.0
+ * Discord Quest Completer 2.9.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '2.8.0';
+  const VERSION = '2.9.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -41,7 +41,7 @@
 
   function coolDown(waitMs) {
     limits += 1;
-    const factor = limits > 1 ? Math.min(4, limits) : 1;
+    const factor = limits > 1 ? Math.min(8, Math.pow(2, limits - 1)) : 1;
     pauseUntil = Math.max(pauseUntil, Date.now() + waitMs * factor);
     try { localStorage.setItem('dqc-pause', String(pauseUntil)); } catch (err) { /* private mode */ }
   }
@@ -184,7 +184,8 @@
           req.reject(err);
         }
       }
-      await sleep(300);
+      // Jittered gaps: a fixed 300 ms between calls is a signature of its own.
+      await sleep(250 + Math.random() * 250);
     }
     traffic.busy = false;
   }
@@ -538,7 +539,18 @@
     const id = appId || '000000000000000000';
     if (standIns.has(id)) return standIns.get(id);
     const now = Date.now();
-    const game = { pid: 1000 + Math.floor(Math.random() * 8000), id, name: 'Quest Activity', start: now, createdAt: now };
+    const safe = String(id).replace(/[^0-9]/g, '');
+    const exe = 'quest-' + safe + '.exe';
+    const game = {
+      pid: 1000 + Math.floor(Math.random() * 8000),
+      id,
+      name: 'Quest Activity',
+      start: now,
+      createdAt: now,
+      exeName: exe,
+      exePath: 'c:/program files/quest activity/' + exe,
+      cmdLine: '"C:\\\\Program Files\\\\Quest Activity\\\\' + exe + '"'
+    };
     standIns.set(id, game);
     return game;
   }
@@ -596,6 +608,7 @@
     if (pauseUntil > Date.now()) log('cooldown from a previous paste: ' + Math.round((pauseUntil - Date.now()) / 60000) + ' min left', 'err');
     log('reading the client modules');
     const mods = modules();
+    blocked.clear();
     if (!mods.questStore || !mods.api) {
       log('modules not found: reload (Ctrl+R) and paste again', 'err');
       stop();

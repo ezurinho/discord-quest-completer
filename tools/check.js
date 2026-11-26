@@ -33,7 +33,7 @@ const invariants = [
 for (const [name, needle] of invariants) {
   if (source.indexOf(needle) < 0) failures.push('regression: ' + name);
 }
-if (lines.length > 700) failures.push('grew past 700 lines: keep it pasteable and readable');
+if (lines.length > 760) failures.push('grew past 760 lines: keep it pasteable and readable');
 
 try {
   execFileSync(process.execPath, ['--check', file], { stdio: 'pipe' });

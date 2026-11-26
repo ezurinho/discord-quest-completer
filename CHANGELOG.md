@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.9.0 — 2026-11-26
+
+Small things that make the traffic look less like a script.
+
+- Gaps between requests are jittered (250-500 ms) instead of a fixed 300 ms.
+- Repeated 429s back off exponentially (2x, 4x, 8x) rather than a flat multiplier.
+- The stand-in game now carries `exeName`, `exePath` and `cmdLine` derived from the
+  application id, which is what the client's own entries have.
+- Pressing Start clears the previous run's marks, so a retry is a retry.
+
 ## 2.8.0 — 2026-11-26
 
 Documentation that matches the code, and regressions that stay dead.
