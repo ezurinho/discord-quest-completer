@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 2.2.0
+ * Discord Quest Completer 2.3.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '2.2.0';
+  const VERSION = '2.3.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -461,6 +461,16 @@
     return game;
   }
 
+  function unpatchRunStore(mods) {
+    const store = mods && mods.runStore;
+    if (!store || !store.__dqcPatched) return;
+    if (store.__dqcReal) store.getRunningGames = store.__dqcReal;
+    if (store.__dqcRealPid) store.getGameForPID = store.__dqcRealPid;
+    delete store.__dqcPatched;
+    delete store.__dqcReal;
+    delete store.__dqcRealPid;
+  }
+
   function patchRunStore(mods) {
     const store = mods.runStore;
     if (!store || store.__dqcPatched || typeof store.getRunningGames !== 'function') return;
@@ -472,17 +482,18 @@
         return Array.from(standIns.values()).find((game) => game.pid === pid) || realPid.call(store, pid);
       };
     }
+    store.__dqcReal = real;
+    store.__dqcRealPid = realPid;
     store.__dqcPatched = true;
   }
 
+  // Dispatching RUNNING_GAMES_CHANGE with a hand-built game crashed Discord's own
+  // ClipStore ("Cannot read properties of undefined (reading 'some')"), because the
+  // client expects a complete process object. The store patch alone is enough for the
+  // heartbeat to see it, so the dispatch is gone.
   function pulseGame(mods, quest, task) {
-    if (!mods.dispatcher) return;
-    const game = fakeGame(quest.config && quest.config.application && quest.config.application.id);
-    try {
-      mods.dispatcher.dispatch({ type: 'RUNNING_GAMES_CHANGE', added: [game], removed: [] });
-    } catch (err) {
-      log('game dispatch failed: ' + err.message, 'err');
-    }
+    const app = (quest.config && quest.config.application) || {};
+    fakeGame(app.id);
   }
 
   async function run() {
@@ -510,6 +521,7 @@
     }
     state.running = true;
     traffic.post = mods.api.post.bind(mods.api);
+    state.mods = mods;
     patchRunStore(mods);
     state.quests = allQuests(mods);
     render();
@@ -546,7 +558,7 @@
       for (const quest of pending) {
         const task = taskOf(quest);
         if (task && task.type !== 'VIDEO') pulseGame(mods, quest, task);
-        if (task && task.type === 'VIDEO') startVideos();
+        if (task) startVideos();
       }
       render();
       if (!pending.length) stop();
@@ -556,6 +568,7 @@
 
   function stop() {
     state.running = false;
+    unpatchRunStore(state.mods);
     if (state.video) clearTimeout(state.video);
     state.video = null;
     for (const id of Array.from(state.timers.keys())) stopVideo(id);

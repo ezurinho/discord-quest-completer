@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.3.0 — 2026-11-26
+
+Stop crashing Discord's own handlers.
+
+- 2.2.0 dispatched `RUNNING_GAMES_CHANGE` with a hand-built process object and the
+  client's ClipStore threw `Cannot read properties of undefined (reading 'some')` on
+  every beat. That is an error in their code caused by an incomplete object on ours, so
+  the dispatch is removed: the `RunningGameStore` patch stays, which is what the
+  heartbeat reads.
+- `stop()` restores the patched store methods instead of leaving the client altered.
+- Nothing else changes; the video path never used the dispatch.
+
 ## 2.2.0 — 2026-11-26
 
 The requests now carry what Discord's own client sends.
