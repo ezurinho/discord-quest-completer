@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 3.5.1
+ * Discord Quest Completer 3.6.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,11 +9,15 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '3.5.1';
+  const VERSION = '3.6.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
   const VIDEO_MAX_MS = 9500;
+  // Progress may never outrun the clock. A store that lags a climbing `sent` is how a
+  // timestamp ends up ahead of the player it claims to be, which is what the endpoint
+  // answers with "not accepting progress".
+  const VIDEO_SLACK_S = 3;
   // Pasted twice? The old panel goes, not a second one: two copies would double
   // every progress request.
   const previous = document.getElementById('dqc-panel');
@@ -30,6 +34,7 @@
   const blocked = new Set();
   let pauseUntil = 0;
   let limits = 0;
+  let enrollClosed = false;
 
   // The cooldown belongs to the account, not to this paste: reloading the page during a
   // 34-minute limit and pressing Start used to restart the count from zero and earn
@@ -44,6 +49,15 @@
     const factor = limits > 1 ? Math.min(8, Math.pow(2, limits - 1)) : 1;
     pauseUntil = Math.max(pauseUntil, Date.now() + waitMs * factor);
     try { localStorage.setItem('dqc-pause', String(pauseUntil)); } catch (err) { /* private mode */ }
+  }
+
+  // Discord answers 429 in seconds; a proxy or an older route can answer in milliseconds,
+  // and multiplying that by 1000 parked the whole run for hours.
+  function retryAfterMs(err) {
+    const body = (err && err.body) || {};
+    const raw = Number(body.retry_after !== undefined ? body.retry_after : body.retryAfter);
+    if (!Number.isFinite(raw) || raw <= 0) return 5000;
+    return raw > 120 ? raw : raw * 1000;
   }
 
   function errorText(err) {
@@ -88,30 +102,41 @@
   }
   function modules() {
     const stream = findModule((e) => pick(e, ['A', 'Z'], 'getStreamerActiveStreamMetadata'));
-    // Either signal is enough: a prototype method, or the class name when the method
-  // was renamed along with the export key.
-  const quests = findModule((e) => pick(e, ['A', 'Z'], 'getQuest') || byDisplayName(e, 'QuestStore'));
+    // Either signal is enough: a prototype method, or the class name when the method was
+    // renamed along with the export key.
+    const quests = findModule((e) => pick(e, ['A', 'Z'], 'getQuest') || byDisplayName(e, 'QuestStore'));
     const dispatcher = findModule((e) => pick(e, ['h', 'Z'], 'flushWaitQueue'));
     const games = findModule((e) => (e && e.Ay && typeof e.Ay.getRunningGames === 'function') || (e && e.ZP && typeof e.ZP.getRunningGames === 'function'));
     const api = findModule((e) => (e && e.Bo && typeof e.Bo.get === 'function') || (e && e.tn && typeof e.tn.get === 'function'));
-  const users = findModule((e) => pick(e, ['A', 'Z'], 'getCurrentUser'));
-  const chans = findModule((e) => pick(e, ['A', 'Z'], 'getSortedPrivateChannels'));
-  const guilds = findModule((e) => pick(e, ['A', 'Z'], 'getAllGuilds'));
+    const users = findModule((e) => pick(e, ['A', 'Z'], 'getCurrentUser'));
+    const chans = findModule((e) => pick(e, ['A', 'Z'], 'getSortedPrivateChannels'));
+    const guilds = findModule((e) => pick(e, ['A', 'Z'], 'getAllGuilds'));
     return {
       questStore: pick(quests, ['A', 'Z'], 'getQuest') || byDisplayName(quests, 'QuestStore'),
       runStore: (games && games.Ay) || (games && games.ZP),
       dispatcher: pick(dispatcher, ['h', 'Z'], 'flushWaitQueue'),
       api: (api && api.Bo) || (api && api.tn),
       streamStore: pick(stream, ['A', 'Z'], 'getStreamerActiveStreamMetadata'),
-    userStore: pick(users, ['A', 'Z'], 'getCurrentUser'),
-    chanStore: pick(chans, ['A', 'Z'], 'getSortedPrivateChannels'),
-    guildChanStore: pick(guilds, ['A', 'Z'], 'getAllGuilds')
+      userStore: pick(users, ['A', 'Z'], 'getCurrentUser'),
+      chanStore: pick(chans, ['A', 'Z'], 'getSortedPrivateChannels'),
+      guildChanStore: pick(guilds, ['A', 'Z'], 'getAllGuilds')
     };
+  }
+  // An expired quest answers 404 on every endpoint, so it never enters the list: one dead
+  // id used to become a card that logged "cannot join" and never moved. A completed quest
+  // keeps its place even past its expiry, because the reward is still claimable.
+  function isExpired(quest) {
+    if (quest && quest.userStatus && quest.userStatus.completedAt) return false;
+    const config = (quest && quest.config) || {};
+    const raw = config.expiresAt || config.expires_at || (quest && quest.expiresAt) || null;
+    const at = raw ? new Date(raw).getTime() : 0;
+    return Number.isFinite(at) && at > 0 && at < Date.now();
   }
   function allQuests(mods) {
     const raw = mods.questStore && mods.questStore.quests;
     if (!raw) return [];
-    return raw instanceof Map ? Array.from(raw.values()) : Object.values(raw);
+    const list = raw instanceof Map ? Array.from(raw.values()) : Object.values(raw);
+    return list.filter((quest) => !isExpired(quest));
   }
   function taskKeysOf(tasks) {
     return tasks instanceof Map ? Array.from(tasks.keys()) : Object.keys(tasks || {});
@@ -197,10 +222,10 @@
           continue;
         }
         if (err && err.status === 429) {
-          const wait = Number(err.body && err.body.retry_after) || 5;
-          coolDown(wait * 1000 + 500);
+          const waitMs = retryAfterMs(err);
+          coolDown(waitMs + 500);
           traffic.queue.unshift(req);
-          log('rate limited: waiting ' + wait.toFixed(1) + 's (strike ' + limits + ')', 'err');
+          log('rate limited: waiting ' + (waitMs / 1000).toFixed(1) + 's (strike ' + limits + ')', 'err');
           await sleep(Math.max(0, pauseUntil - Date.now()));
         } else {
           req.reject(err);
@@ -248,6 +273,7 @@
     '#dqc-log .ok{color:#7fe4b3}',
     '#dqc-log .err{color:#ff8f9a}',
     '#dqc-log .time{color:#5d6472}',
+    '#dqc-bubble{position:fixed;right:20px;bottom:20px;z-index:2147483000;width:44px;height:44px;border:0;border-radius:14px;background:linear-gradient(120deg,#6d4bff,#2f9dff);color:#fff;font:700 12px/1 system-ui,sans-serif;cursor:pointer;box-shadow:0 12px 30px -8px rgba(0,0,0,.7);letter-spacing:.5px}',
     '#dqc-foot{padding:9px 12px 11px;font-size:10px;color:#6f7787;letter-spacing:.3px;display:flex;justify-content:space-between}',
     '#dqc-foot b{color:#98a1b0;font-weight:600}'
   ].join('');
@@ -305,7 +331,7 @@
     panel.querySelector('#dqc-start').addEventListener('click', () => run());
     panel.querySelector('#dqc-stop').addEventListener('click', () => stop());
     panel.querySelector('#dqc-diag').addEventListener('click', () => diagnose());
-    panel.querySelector('#dqc-hide').addEventListener('click', () => panel.remove());
+    panel.querySelector('#dqc-hide').addEventListener('click', () => hide());
     try {
       const saved = JSON.parse(localStorage.getItem('dqc-pos') || 'null');
       if (saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)) {
@@ -321,6 +347,29 @@
     });
     drag(panel, panel.querySelector('[data-drag]'));
     return panel;
+  }
+
+  // Hiding used to leave a re-paste as the only way back. A small chip in the corner
+  // brings the same panel back, so there is still exactly one copy running.
+  function bubble() {
+    if (document.getElementById('dqc-bubble')) return;
+    const chip = document.createElement('button');
+    chip.id = 'dqc-bubble';
+    chip.textContent = 'QC';
+    chip.title = 'Quest Completer';
+    chip.addEventListener('click', () => {
+      chip.remove();
+      const panel = mount();
+      panel.style.display = '';
+    });
+    document.body.appendChild(chip);
+  }
+
+  function hide() {
+    const panel = state.ui;
+    if (!panel) return;
+    panel.style.display = 'none';
+    bubble();
   }
 
   function drag(panel, handle) {
@@ -389,26 +438,54 @@
     return card;
   }
 
+  // Rebuilding an unchanged list every eight seconds steals the checkbox focus and jumps
+  // the scroll; a signature of what is already on screen decides whether to touch it.
+  function signature() {
+    return state.quests.map((quest) => {
+      const task = taskOf(quest);
+      return [
+        quest.id,
+        task && task.type,
+        task && task.target,
+        task ? questValue(quest, task.key) : 0,
+        quest.userStatus && quest.userStatus.completedAt ? 1 : 0,
+        blocked.has(quest.id) ? 1 : 0,
+        state.selected.has(quest.id) ? 1 : 0,
+        state.running ? 1 : 0,
+        state.key ? 1 : 0
+      ].join('|');
+    }).join(',');
+  }
+
+  function tally() {
+    const count = state.ui && state.ui.querySelector('[data-count]');
+    if (!count) return;
+    const done = state.quests.filter((q) => q.userStatus && q.userStatus.completedAt).length;
+    const wait = Math.max(0, Math.round((pauseUntil - Date.now()) / 1000));
+    const mmss = Math.floor(wait / 60) + ':' + String(wait % 60).padStart(2, '0');
+    count.textContent = done + ' / ' + state.quests.length + ' claimed' + (wait ? ' · rate limited, ' + mmss + ' left' : '');
+  }
+
   function render() {
     const list = state.ui && state.ui.querySelector('[data-list]');
     if (!list) return;
-    list.textContent = '';
-    if (!state.quests.length) {
-      const empty = document.createElement('div');
-      empty.className = 'dqc-meta';
-      empty.style.padding = '14px 6px';
-      empty.textContent = 'No quests on this account right now.';
-      list.appendChild(empty);
-      return;
+    const sig = signature();
+    if (sig !== state.sig) {
+      state.sig = sig;
+      const keep = list.scrollTop || 0;
+      list.textContent = '';
+      if (!state.quests.length) {
+        const empty = document.createElement('div');
+        empty.className = 'dqc-meta';
+        empty.style.padding = '14px 6px';
+        empty.textContent = 'No quests on this account right now.';
+        list.appendChild(empty);
+      } else {
+        for (const quest of state.quests) list.appendChild(cardFor(quest));
+      }
+      list.scrollTop = keep;
     }
-    for (const quest of state.quests) list.appendChild(cardFor(quest));
-    const done = state.quests.filter((q) => q.userStatus && q.userStatus.completedAt).length;
-    const count = state.ui.querySelector('[data-count]');
-    if (count) {
-      const wait = Math.max(0, Math.round((pauseUntil - Date.now()) / 1000));
-      const mmss = Math.floor(wait / 60) + ':' + String(wait % 60).padStart(2, '0');
-      count.textContent = done + ' / ' + state.quests.length + ' claimed' + (wait ? ' · rate limited, ' + mmss + ' left' : '');
-    }
+    tally();
   }
 
   // Discord seals an attribution blob per quest and echoes it back on every enroll and
@@ -424,6 +501,7 @@
 
   async function enroll(quest) {
     if (quest.userStatus && quest.userStatus.enrolledAt) return;
+    if (enrollClosed) return;
     try {
       await enqueue('/quests/' + quest.id + '/enroll', enrollBody(quest));
       log('joined ' + (taskOf(quest) ? taskOf(quest).name : quest.id), 'ok');
@@ -448,7 +526,13 @@
       return;
     }
     const step = (VIDEO_MIN_MS + Math.random() * (VIDEO_MAX_MS - VIDEO_MIN_MS)) / 1000;
-    const next = Math.min(task.target, Number((current + step).toFixed(6)));
+    const clock = videoClock.get(quest.id) || { base: current, at: Date.now() };
+    videoClock.set(quest.id, clock);
+    const ceiling = clock.base + (Date.now() - clock.at) / 1000 + VIDEO_SLACK_S;
+    const next = Math.min(task.target, ceiling, Number((current + step).toFixed(6)));
+    // A store that already sits at the ceiling means the player is ahead of us; posting a
+    // lower timestamp than the one stored is rejected, so the tick waits instead.
+    if (next <= current) return;
     try {
       await enqueue('/quests/' + quest.id + '/video-progress', { timestamp: next });
       sent.set(quest.id, next);
@@ -532,11 +616,16 @@
   // five times the request rate against the same bucket, which is exactly what
   // earns a 34-minute 429.
   const sent = new Map();
+  // Per quest: the stored value and the moment this run started driving it. The ceiling
+  // for every timestamp is that base plus the wall clock.
+  const videoClock = new Map();
 
   function nextVideoQuest() {
     const waiting = state.quests.filter((quest) => {
       if (quest.userStatus && quest.userStatus.completedAt) return false;
       if (blocked.has(quest.id)) return false;
+      // Unchecking a card mid-run used to leave its video loop alive until the next paste.
+      if (!state.selected.has(quest.id)) return false;
       if (!quest.userStatus || !quest.userStatus.enrolledAt) return false;
       const task = taskOf(quest);
       return task && task.type === 'VIDEO' && questValue(quest, task.key) < task.target;
@@ -733,6 +822,8 @@
     state.running = true;
     sent.clear();
     stalls.clear();
+    videoClock.clear();
+    state.sig = '';
     traffic.post = mods.api.post.bind(mods.api);
     state.mods = mods;
     state.key = streamKey(mods);
@@ -740,10 +831,11 @@
     state.quests = allQuests(mods);
     render();
     log(state.quests.length + ' quests on this account');
+    // While the block is live every enrolment answers the same refusal. Asking once per
+    // quest anyway is how a warning turns into a longer block; joined quests still run.
     const blockedUntil = mods.questStore && mods.questStore.questEnrollmentBlockedUntil;
-    if (blockedUntil && new Date(blockedUntil).getTime() > Date.now()) {
-      log('Discord blocked enrolment on this account until ' + new Date(blockedUntil).toLocaleString(), 'err');
-    }
+    enrollClosed = Boolean(blockedUntil && new Date(blockedUntil).getTime() > Date.now());
+    if (enrollClosed) log('Discord blocked enrolment until ' + new Date(blockedUntil).toLocaleString() + ' · driving joined quests only', 'err');
     // Nothing here waits for the network. The old version enrolled every quest first
     // and only then logged anything, so one request the client never settled hid the
     // whole run behind an empty panel. Enrolment is now fire-and-forget and the

@@ -19,6 +19,9 @@ self-XSS, not an error from this script.
 Pasting a second time stops the previous copy and replaces the panel. Two live copies
 would double every progress request.
 
+**×** hides the panel. The small **QC** chip in the corner brings it back — no second paste,
+and no second copy.
+
 ## What it does
 
 | Task | How |
@@ -33,6 +36,10 @@ would double every progress request.
 real Go Live with another person in the channel, and achievements are validated by the
 game rather than the client. Without a voice channel, `PLAY_ACTIVITY` shows **NEEDS
 VOICE** instead, because the heartbeat key is built from the call you are in.
+
+No progress claim is ever ahead of the player: a video timestamp is capped at the value the
+run started from plus the seconds elapsed since, so a lagging store cannot make the script
+report more video than the clock allows.
 
 Modules are found by a prototype method (`getQuest`, `flushWaitQueue`, `getRunningGames`,
 `.post`) instead of by name, so a renamed export does not break the run.
@@ -51,7 +58,8 @@ diagnose: Firefox Browser · keys WATCH_VIDEO · app none
 Read it in this order:
 
 1. **`blocked until <date>`** - Discord stopped accepting enrolments on the account.
-   Nothing here can fix that; wait for the date.
+   The run stops asking to join and drives only the quests already accepted. Nothing here
+   can fix the block; wait for the date.
 2. **`app none`** on a game quest - the application id is missing, so the stand-in has
    nothing to be. That quest cannot advance.
 3. **`joined` low** - the quests are not accepted on the account. The log line
@@ -72,6 +80,8 @@ is saved, so reloading during one does not restart the punishment.
   HTTP module, as you.
 - Game quests are the weak path: the stand-in is not the complete process object the
   client builds, so some quests will not see it.
+- Expired quests are dropped from the list instead of being enrolled and 404ing; a
+  completed quest stays until its reward is claimed.
 
 ## Development
 

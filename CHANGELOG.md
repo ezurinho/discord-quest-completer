@@ -1,5 +1,35 @@
 # Changelog
 
+## 3.6.0 — 2026-11-26
+
+Six things the client was doing wrong, found by reading the run instead of the happy path.
+
+- **Unchecking a card mid-run did nothing.** The single video cadence picked the next
+  quest without asking whether it was still ticked, so a quest you turned off kept
+  posting until the next paste. The selection is now part of the pick.
+- **A video timestamp could outrun the wall clock.** `sent` climbed on its own when the
+  store lagged, so after a slow patch the script claimed more seconds than the player
+  had been running — the exact shape the endpoint answers with "not accepting
+  progress". Every post is now capped at the value this run started from plus the
+  elapsed seconds plus three of slack.
+- **Expired quests were driven.** They answer 404 on every endpoint, which filled the
+  log with `cannot join` and burned a request per pulse. `config.expiresAt` /
+  `expires_at` now drops them from the list; a completed quest survives its expiry
+  because the reward is still claimable.
+- **A blocked enrolment was ignored.** `questEnrollmentBlockedUntil` was printed and
+  then every quest asked to join anyway, one 404 per quest per run. While the block is
+  live the run stops asking and drives only the quests already joined.
+- **Every render rebuilt the list.** Once every eight seconds the cards were thrown away
+  and rebuilt, which stole the checkbox focus and jumped the scroll. A signature of what
+  is on screen decides whether to paint; the footer tally still updates every tick.
+- **Hiding the panel was a one-way door.** `×` removed it and the README's answer was
+  "paste again". A small **QC** chip in the corner brings the same panel back, so there
+  is still exactly one copy running.
+- `retry_after` is read as seconds but a millisecond answer is no longer multiplied by
+  1000, which would have parked the queue for hours.
+- `modules()` lost its broken indentation, and the checker grew four new invariants:
+  the clock ceiling, the enrolment block, the expiry filter and the selection filter.
+
 ## 3.5.1 — 2026-11-26
 
 The suite measured the queue, not the script.

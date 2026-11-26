@@ -28,12 +28,16 @@ const invariants = [
   ['surfaces an enrolment block', 'questEnrollmentBlockedUntil'],
   ['handles Map-shaped tasks', 'taskKeysOf'],
   ['reads the moved application id', 'applications'],
-  ['diagnostics button', 'diagnose']
+  ['diagnostics button', 'diagnose'],
+  ['progress cannot outrun the clock', 'videoClock'],
+  ['a blocked enrolment is not retried', 'enrollClosed'],
+  ['an expired quest is dropped', 'isExpired'],
+  ['a selection is honoured mid-run', 'state.selected.has(quest.id)']
 ];
 for (const [name, needle] of invariants) {
   if (source.indexOf(needle) < 0) failures.push('regression: ' + name);
 }
-if (lines.length > 900) failures.push('grew past 900 lines: keep it pasteable and readable');
+if (lines.length > 980) failures.push('grew past 980 lines: keep it pasteable and readable');
 
 try {
   execFileSync(process.execPath, ['--check', file], { stdio: 'pipe' });
