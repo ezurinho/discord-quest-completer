@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.4.0 — 2026-11-26
+
+Play quests were invisible to the client, and now they are not.
+
+- The stand-in was only injected through `getRunningGames` and `getGameForPID`. Canary
+  decides quest eligibility from the visible and candidate views, so a game missing from
+  `getVisibleGame`, `getVisibleRunningGames`, `getCandidateGames` and
+  `getRunningDiscordApplicationIds` never gets a heartbeat scheduled and the quest sits at
+  0 % forever. All six are patched now, each one only if the build has it.
+- `RUNNING_GAMES_CHANGE` is dispatched again, with the `games` field. The missing field is
+  exactly what made the client's handler throw "reading 'some'" and crashed ClipStore in
+  2.3.0; the dispatch is inside a try/catch and the error is reported instead of killing
+  the run.
+- The stand-in is withdrawn when Stop is pressed, so the client stops scheduling
+  heartbeats for a process that no longer exists.
+- A quest waiting on its enrolment still registers its stand-in immediately, instead of
+  waiting up to a minute for the next pulse.
+- Module lookup accepts a method carried directly on the object, not only on its
+  prototype.
+- The smoke suite asserts that a game is announced with the `games` array and withdrawn
+  on Stop.
+
 ## 3.3.0 — 2026-11-26
 
 Find the store even when every name changed.

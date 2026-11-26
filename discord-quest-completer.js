@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 3.3.0
+ * Discord Quest Completer 3.4.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '3.3.0';
+  const VERSION = '3.4.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -80,7 +80,9 @@
     if (!exports) return null;
     for (const key of keys) {
       const value = exports[key];
-      if (value && value.__proto__ && typeof value.__proto__[protoMethod] === 'function') return value;
+      // A normal property lookup walks the prototype chain, so this covers both class
+      // instances and plain objects that carry the method directly.
+      if (value && typeof value[protoMethod] === 'function') return value;
     }
     return null;
   }
@@ -550,11 +552,16 @@
   // One stand-in per app, kept alive: Discord's own heartbeat reports progress every
   // 60 s once the process is in RunningGameStore, so churning the pid only breaks it.
   const standIns = new Map();
+  // Canary derives quest eligibility from the visible and candidate views, not only
+  // from getRunningGames: a game missing from those never gets a heartbeat scheduled,
+  // which is why patching two methods parked every play quest at 0 %.
+  const PATCHED = ['getRunningGames', 'getGameForPID', 'getVisibleGame', 'getVisibleRunningGames', 'getRunningDiscordApplicationIds', 'getCandidateGames'];
+
   function fakeGame(appId) {
     const id = appId || '000000000000000000';
     if (standIns.has(id)) return standIns.get(id);
     const now = Date.now();
-    const safe = String(id).replace(/[^0-9]/g, '');
+    const safe = String(id).replace(/[^0-9]/g, '') || '0';
     const exe = 'quest-' + safe + '.exe';
     const game = {
       pid: 1000 + Math.floor(Math.random() * 8000),
@@ -562,47 +569,74 @@
       name: 'Quest Activity',
       start: now,
       createdAt: now,
+      pidPath: [],
+      processName: exe,
       exeName: exe,
       exePath: 'c:/program files/quest activity/' + exe,
-      cmdLine: '"C:\\\\Program Files\\\\Quest Activity\\\\' + exe + '"'
+      cmdLine: '"C:\\\\Program Files\\\\Quest Activity\\\\' + exe + '"',
+      executables: [{ os: 'win32', name: exe, is_launcher: false }],
+      windowHandle: 0,
+      fullscreenType: 0,
+      overlay: false,
+      sandboxed: false,
+      hidden: false,
+      isLauncher: false
     };
     standIns.set(id, game);
     return game;
   }
 
+  function dispatchGames(mods, added, removed) {
+    const dispatcher = mods && mods.dispatcher;
+    const store = mods && mods.runStore;
+    if (!dispatcher || typeof dispatcher.dispatch !== 'function' || !store) return;
+    try {
+      // `games` is not optional: the client's own handler reads it and threw
+      // "reading 'some'" when the field was missing.
+      dispatcher.dispatch({ type: 'RUNNING_GAMES_CHANGE', added, removed, games: store.getRunningGames() });
+    } catch (err) {
+      log('the client refused the game event: ' + errorText(err), 'err');
+    }
+  }
+
   function unpatchRunStore(mods) {
     const store = mods && mods.runStore;
     if (!store || !store.__dqcPatched) return;
-    if (store.__dqcReal) store.getRunningGames = store.__dqcReal;
-    if (store.__dqcRealPid) store.getGameForPID = store.__dqcRealPid;
+    if (store.__dqcReal) {
+      for (const name of PATCHED) if (typeof store.__dqcReal[name] === 'function') store[name] = store.__dqcReal[name];
+    }
     delete store.__dqcPatched;
     delete store.__dqcReal;
-    delete store.__dqcRealPid;
+    standIns.clear();
   }
 
   function patchRunStore(mods) {
     const store = mods.runStore;
     if (!store || store.__dqcPatched || typeof store.getRunningGames !== 'function') return;
-    const real = store.getRunningGames;
-    const realPid = store.getGameForPID;
-    store.getRunningGames = function () { return real.call(store).concat(Array.from(standIns.values())); };
-    if (typeof realPid === 'function') {
-      store.getGameForPID = function (pid) {
-        return Array.from(standIns.values()).find((game) => game.pid === pid) || realPid.call(store, pid);
-      };
-    }
+    const real = {};
+    for (const name of PATCHED) if (typeof store[name] === 'function') real[name] = store[name];
+    const all = () => Array.from(standIns.values());
+    store.getRunningGames = function () { return real.getRunningGames.call(store).concat(all()); };
+    if (real.getGameForPID) store.getGameForPID = function (pid) { return all().find((g) => g.pid === pid) || real.getGameForPID.call(store, pid); };
+    if (real.getVisibleGame) store.getVisibleGame = function () { return all()[0] || real.getVisibleGame.call(store); };
+    if (real.getVisibleRunningGames) store.getVisibleRunningGames = function () { return real.getVisibleRunningGames.call(store).concat(all()); };
+    if (real.getCandidateGames) store.getCandidateGames = function () { return real.getCandidateGames.call(store).concat(all()); };
+    if (real.getRunningDiscordApplicationIds) store.getRunningDiscordApplicationIds = function () {
+      const ids = real.getRunningDiscordApplicationIds.call(store);
+      const ours = all().map((game) => String(game.id));
+      return ids instanceof Set ? new Set(Array.from(ids).concat(ours)) : (ids || []).concat(ours);
+    };
     store.__dqcReal = real;
-    store.__dqcRealPid = realPid;
     store.__dqcPatched = true;
   }
 
-  // Dispatching RUNNING_GAMES_CHANGE with a hand-built game crashed Discord's own
-  // ClipStore ("Cannot read properties of undefined (reading 'some')"), because the
-  // client expects a complete process object. The store patch alone is enough for the
-  // heartbeat to see it, so the dispatch is gone.
   function pulseGame(mods, quest, task) {
-    const app = (quest.config && quest.config.application) || {};
-    fakeGame(app.id);
+    const game = fakeGame(task.appId);
+    // Announcing an existing stand-in again is noise; a new one has to be announced so
+    // the client schedules its heartbeat.
+    if (game.__dqcLive) return;
+    game.__dqcLive = true;
+    dispatchGames(mods, [game], []);
   }
 
   async function run() {
@@ -667,10 +701,12 @@
       if (!joined) {
         log('not joined: ' + task.name + ' · asking to join', 'err');
         enroll(quest).catch(() => {});
-        continue;
+      } else {
+        log(task.name + ' · ' + task.type + ' · ' + value + '/' + task.target);
       }
-      log(task.name + ' · ' + task.type + ' · ' + value + '/' + task.target);
-      if (task.type !== 'VIDEO') { fakeGame(task.appId); pulseGame(mods, quest, task); }
+      // The stand-in is registered even when the enrolment is still in flight;
+      // waiting for the next pulse delayed every play quest by up to a minute.
+      if (task.type !== 'VIDEO') pulseGame(mods, quest, task);
     }
     startVideos();
     state.pulse = setInterval(() => {
@@ -695,6 +731,9 @@
 
   function stop() {
     state.running = false;
+    // Withdraw the stand-ins before restoring the store, so the client stops scheduling
+    // heartbeats for a process that no longer exists.
+    if (state.mods && standIns.size) dispatchGames(state.mods, [], Array.from(standIns.values()));
     unpatchRunStore(state.mods);
     if (state.video) clearTimeout(state.video);
     state.video = null;

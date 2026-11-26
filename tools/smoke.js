@@ -72,6 +72,11 @@ const quests = new Map([
     config: { messages: { questName: 'Play the game' }, taskConfigV2: { tasks: { PLAY_ON_DESKTOP: { target: 15, applications: [{ id: '999' }] } } } },
     userStatus: {}
   }],
+  ['q-404', {
+    id: 'q-404',
+    config: { messages: { questName: 'Gone quest' }, taskConfigV2: { tasks: { PLAY_ON_DESKTOP: { target: 15, applications: [{ id: '888' }] } } } },
+    userStatus: {}
+  }],
   ['q-claim', {
     id: 'q-claim',
     config: { messages: { questName: 'Reward waiting' }, taskConfigV2: { tasks: { WATCH_VIDEO: { target: 30 } } } },
@@ -84,7 +89,15 @@ const questStore = useName
   ? { constructor: { displayName: 'QuestStore' }, quests, getQuest: (id) => quests.get(id) }
   : Object.create(proto({ getQuest: (id) => quests.get(id) }));
 if (!useName) questStore.quests = quests;
-const runStore = proto({ getRunningGames: () => [], getGameForPID: () => null });
+const events = [];
+const runStore = proto({
+  getRunningGames: () => [],
+  getGameForPID: () => null,
+  getVisibleGame: () => null,
+  getVisibleRunningGames: () => [],
+  getCandidateGames: () => [],
+  getRunningDiscordApplicationIds: () => new Set()
+});
 let limited = false;
 const api = {
   // First video call is rate limited, enrolments 404: the two failure paths that
@@ -99,7 +112,7 @@ const api = {
       err.body = { retry_after: 0.2 };
       throw err;
     }
-    if (url.indexOf('/enroll') >= 0) {
+    if (url.indexOf('q-404') >= 0) {
       const err = new Error('unknown quest');
       err.status = 404;
       err.body = { message: 'Unknown quest' };
@@ -113,7 +126,7 @@ const chunks = [[[Symbol()], {}, (req) => { req.c = {
   1: { exports: { A: questStore } },
   2: { exports: { Ay: runStore } },
   3: { exports: { Bo: api } },
-  4: { exports: { h: proto({ flushWaitQueue: () => {} }) } }
+  4: { exports: { h: proto({ flushWaitQueue: () => {}, dispatch: (payload) => events.push(payload) }) } }
 }; }]];
 const window = {
   webpackChunkdiscord_app: { push: (arr) => { arr[2]({ c: chunks[0][2] && undefined }); return 0; }, pop: () => {} }
@@ -124,7 +137,7 @@ const req = { c: {
   1: { exports: { A: questStore } },
   2: { exports: { Ay: runStore } },
   3: { exports: { Bo: api } },
-  4: { exports: { h: proto({ flushWaitQueue: () => {} }) } }
+  4: { exports: { h: proto({ flushWaitQueue: () => {}, dispatch: (payload) => events.push(payload) }) } }
 } };
 window.webpackChunkdiscord_app = {
   push: (arr) => { arr[2](req); return req; },
@@ -189,11 +202,17 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
   const claim = calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('/claim-reward') >= 0);
   if (!claim.length) failures.push('the completed quest was never claimed');
   if (claim.length && claim[0].body && claim[0].body.traffic_metadata_sealed === undefined) failures.push('the claim body is missing the sealed blob');
+  const announced = events.find((e) => e.type === 'RUNNING_GAMES_CHANGE' && e.added && e.added.length);
+  if (!announced) failures.push('no game was announced to the client');
+  else {
+    if (!Array.isArray(announced.games)) failures.push('the game event has no games array');
+    else if (!announced.games.some((g) => String(g.id) === '999')) failures.push('the stand-in is missing from the games array');
+  }
   if (diag && diag.handlers.click) diag.handlers.click[0]();
   await new Promise((r) => setTimeout(r, 200));
   const after = logBox ? logBox.textContent : '';
   if (after.indexOf('blocked until') < 0) failures.push('the diagnosis printed nothing about the block');
-  if (after.indexOf('3 quests') < 0) failures.push('the diagnosis miscounted the quests');
+  if (after.indexOf('4 quests') < 0) failures.push('the diagnosis miscounted the quests');
   if (stop && stop.handlers.click) stop.handlers.click[0]();
   const before = calls.length;
   await new Promise((r) => setTimeout(r, 800));
