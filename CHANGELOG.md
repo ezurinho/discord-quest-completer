@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.1.0 — 2026-11-26
+
+- Unchecking every quest ran *every* quest: the guard was `state.selected.size &&`,
+  so an empty selection fell through to "no filter". An empty selection now means
+  nothing runs.
+- The smoke suite covers the picker (uncheck, restart, nothing driven), the claim path
+  with its sealed blob, the `?` diagnosis, and that Stop really stops the requests.
+
 ## 3.0.0 — 2026-11-26
 
 Every render since 2.6.0 threw, and this is the fix.

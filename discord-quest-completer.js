@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 3.0.0
+ * Discord Quest Completer 3.1.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '3.0.0';
+  const VERSION = '3.1.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -650,7 +650,7 @@
       }
       const task = taskOf(quest);
       if (!task) continue;
-      if (state.selected.size && !state.selected.has(quest.id)) continue;
+      if (!state.selected.has(quest.id)) continue;
       const value = questValue(quest, task.key);
       const joined = Boolean(quest.userStatus && quest.userStatus.enrolledAt);
       if (!joined) {

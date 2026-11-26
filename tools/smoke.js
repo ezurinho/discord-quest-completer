@@ -71,6 +71,11 @@ const quests = new Map([
     id: 'q-game',
     config: { messages: { questName: 'Play the game' }, taskConfigV2: { tasks: { PLAY_ON_DESKTOP: { target: 15, applications: [{ id: '999' }] } } } },
     userStatus: {}
+  }],
+  ['q-claim', {
+    id: 'q-claim',
+    config: { messages: { questName: 'Reward waiting' }, taskConfigV2: { tasks: { WATCH_VIDEO: { target: 30 } } } },
+    userStatus: { enrolledAt: '2026-01-01T00:00:00Z', completedAt: '2026-01-02T00:00:00Z', progress: { WATCH_VIDEO: { value: 30 } } }
   }]
 ]);
 
@@ -139,6 +144,9 @@ const failures = [];
 const panel = body.children.find((node) => node.id === 'dqc-panel');
 if (!panel) failures.push('the panel was not mounted');
 const start = panel && panel.querySelector('#dqc-start');
+const stop = panel && panel.querySelector('#dqc-stop');
+const diag = panel && panel.querySelector('#dqc-diag');
+if (!diag || !diag.handlers.click || !diag.handlers.click.length) failures.push('the ? button has no handler');
 if (!start || !start.handlers.click || !start.handlers.click.length) failures.push('Start has no click handler');
 
 (async () => {
@@ -152,11 +160,37 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
   const logBox = panel && panel.querySelector('[data-log]');
   const logged = logBox ? logBox.textContent : '';
   if (logged.indexOf('quests on this account') < 0) failures.push('the run never logged the quest count');
+  const claim = calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('/claim-reward') >= 0);
+  if (!claim.length) failures.push('the completed quest was never claimed');
+  if (claim.length && claim[0].body && claim[0].body.traffic_metadata_sealed === undefined) failures.push('the claim body is missing the sealed blob');
+  if (diag && diag.handlers.click) diag.handlers.click[0]();
+  await new Promise((r) => setTimeout(r, 200));
+  const after = logBox ? logBox.textContent : '';
+  if (after.indexOf('blocked until') < 0) failures.push('the diagnosis printed nothing about the block');
+  if (after.indexOf('3 quests') < 0) failures.push('the diagnosis miscounted the quests');
+  if (stop && stop.handlers.click) stop.handlers.click[0]();
+  const before = calls.length;
+  await new Promise((r) => setTimeout(r, 800));
+  if (calls.length !== before) failures.push('requests continued after Stop');
+
+  const list = panel && panel.querySelector('[data-list]');
+  const change = list && list.handlers.change && list.handlers.change[0];
+  if (!change) failures.push('the quest list has no change handler');
+  if (change) {
+    change({ target: { classList: { contains: (name) => name === 'dqc-pick' }, dataset: { id: 'q-game' }, checked: false } });
+    calls.length = 0;
+    start.handlers.click[0]();
+    await new Promise((r) => setTimeout(r, 1200));
+    const again = calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('q-game') >= 0);
+    if (again.length) failures.push('an unchecked quest was still driven');
+    if (!calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('/video-progress') >= 0).length) failures.push('the checked quest stopped running after a restart');
+    if (stop && stop.handlers.click) stop.handlers.click[0]();
+  }
   if (failures.length) {
     console.error('smoke: ' + failures.join('; '));
     console.error('log was: ' + (panel && panel.querySelector('[data-log]') ? panel.querySelector('[data-log]').textContent.slice(0, 400) : 'no log node'));
     process.exit(1);
   }
-  console.log('smoke: ok, ' + calls.length + ' requests, ' + video.length + ' video, ' + enrol.length + ' enrol');
+  console.log('smoke: ok, ' + calls.length + ' requests, ' + video.length + ' video, ' + enrol.length + ' enrol, ' + claim.length + ' claim');
   process.exit(0);
 })();
