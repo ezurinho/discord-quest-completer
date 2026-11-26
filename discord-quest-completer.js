@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 2.6.1
+ * Discord Quest Completer 2.7.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '2.6.1';
+  const VERSION = '2.7.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -270,7 +270,8 @@
       '<div id="dqc-actions">',
       '<button class="dqc-btn" id="dqc-start">Start</button>',
       '<button class="dqc-btn" id="dqc-stop" disabled>Stop</button>',
-      '<button class="dqc-btn" id="dqc-hide" title="Hide (re-paste to reopen)">×</button>',
+      '<button class="dqc-btn" id="dqc-diag" title="Print what the client sees">?</button>',
+    '<button class="dqc-btn" id="dqc-hide" title="Hide (re-paste to reopen)">×</button>',
       '</div></header>',
       '<div id="dqc-body"><div data-list></div></div>',
       '<div id="dqc-log" data-log></div>',
@@ -280,6 +281,7 @@
     state.ui = panel;
     panel.querySelector('#dqc-start').addEventListener('click', () => run());
     panel.querySelector('#dqc-stop').addEventListener('click', () => stop());
+    panel.querySelector('#dqc-diag').addEventListener('click', () => diagnose());
     panel.querySelector('#dqc-hide').addEventListener('click', () => panel.remove());
     try {
       const saved = JSON.parse(localStorage.getItem('dqc-pos') || 'null');
@@ -419,6 +421,16 @@
     try {
       await enqueue('/quests/' + quest.id + '/video-progress', { timestamp: next });
       sent.set(quest.id, next);
+      // Four posts in a row with the store unchanged means Discord is not taking the
+      // progress, whatever the request returns.
+      const observed = questValue(quest, task.key);
+      const last = stalls.get(quest.id);
+      const idle = last && observed <= last.value ? last.count + 1 : 0;
+      stalls.set(quest.id, { value: observed, count: idle });
+      if (idle === 4) {
+        log(task.name + ': Discord is not accepting progress', 'err');
+        blocked.add(quest.id);
+      }
       log(task.name + ' · ' + next.toFixed(1) + '/' + task.target + ' s');
     } catch (err) {
       if (err && err.status === 404) {
@@ -432,6 +444,33 @@
   }
 
   const claimed = new Set();
+
+  // Answers the only question worth asking when a panel looks idle: what does the
+  // client actually hold for these quests?
+  function diagnose() {
+    const mods = state.mods || modules();
+    if (!mods.questStore) { log('diagnose: no quest store', 'err'); return; }
+    const store = mods.questStore;
+    log('diagnose: ' + Object.keys(store).filter((k) => k.indexOf('quest') >= 0).join(', '));
+    log('diagnose: blocked until ' + (store.questEnrollmentBlockedUntil || 'never'));
+    const list = allQuests(mods);
+    const counts = { video: 0, game: 0, other: 0, joined: 0, done: 0 };
+    for (const quest of list) {
+      const task = taskOf(quest);
+      if (!task) continue;
+      if (task.type === 'VIDEO') counts.video += 1; else if (task.type === 'GAME') counts.game += 1; else counts.other += 1;
+      if (quest.userStatus && quest.userStatus.enrolledAt) counts.joined += 1;
+      if (quest.userStatus && quest.userStatus.completedAt) counts.done += 1;
+    }
+    log('diagnose: ' + list.length + ' quests · ' + counts.video + ' video · ' + counts.game + ' game · ' + counts.other + ' other · ' + counts.joined + ' joined · ' + counts.done + ' done');
+    const sample = list.find((q) => { const t = taskOf(q); return t && t.type === 'VIDEO'; });
+    if (sample) {
+      const task = taskOf(sample);
+      log('diagnose: ' + task.name + ' · keys ' + taskKeysOf(configOf(sample).tasks).join('|') + ' · app ' + (task.appId || 'none'));
+    }
+  }
+
+  const stalls = new Map();
 
   async function claim(quest) {
     try {

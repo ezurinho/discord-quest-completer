@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.7.0 — 2026-11-26
+
+Ask the client what it holds.
+
+- `?` in the header prints a diagnosis to the log: quest-related store keys, the
+  enrolment block date, counts by task type, joined/done totals, and for the first video
+  quest its task keys and application id. That is the difference between "no funciona"
+  and knowing which field is empty.
+- Four consecutive video posts with the store value unchanged means Discord is not
+  accepting progress; the quest is marked and the log says so, instead of posting into
+  the void every 8 s.
+
 ## 2.6.1 — 2026-11-26
 
 - `RUNNING` never appeared: the label still checked the per-quest timer map that the
