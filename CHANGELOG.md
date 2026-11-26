@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.5.1 — 2026-11-26
+
+The suite measured the queue, not the script.
+
+- The smoke suite waited 2.6 s for the first video request. Every request goes through
+  the client queue with a 250-500 ms gap, and on a fresh run the video tick is queued
+  behind the enrolments and the claim, so the first post could land after the deadline and
+  the rate-limit retry after that. It waits for the queue now.
+
 ## 3.5.0 — 2026-11-26
 
 `PLAY_ACTIVITY` quests can now be driven, and they are no longer misread as games.

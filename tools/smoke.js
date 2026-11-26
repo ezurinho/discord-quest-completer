@@ -201,7 +201,9 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
 
 (async () => {
   if (start && start.handlers.click) start.handlers.click[0]();
-  await new Promise((r) => setTimeout(r, 2600));
+  // Every request goes through the client queue with a 250-500 ms gap, so the first
+  // video tick can sit behind four other calls: wait for the queue, not for a round number.
+  await new Promise((r) => setTimeout(r, 4500));
   const video = calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('/video-progress') >= 0);
   const enrol = calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('/enroll') >= 0);
   if (video.length < 2) failures.push('the rate-limited video request was never retried; calls=' + JSON.stringify(calls.map((c) => String(c.url))));
@@ -241,7 +243,7 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
     change({ target: { classList: { contains: (name) => name === 'dqc-pick' }, dataset: { id: 'q-game' }, checked: false } });
     calls.length = 0;
     start.handlers.click[0]();
-    await new Promise((r) => setTimeout(r, 1200));
+    await new Promise((r) => setTimeout(r, 2500));
     const again = calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('q-game') >= 0);
     if (again.length) failures.push('an unchecked quest was still driven');
     if (!calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('/video-progress') >= 0).length) failures.push('the checked quest stopped running after a restart');
