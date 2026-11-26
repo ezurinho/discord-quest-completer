@@ -82,8 +82,28 @@ const quests = new Map([
 const questStore = Object.create(proto({ getQuest: (id) => quests.get(id) }));
 questStore.quests = quests;
 const runStore = proto({ getRunningGames: () => [], getGameForPID: () => null });
+let limited = false;
 const api = {
-  post: async (opts) => { calls.push(opts); return { ok: true }; },
+  // First video call is rate limited, enrolments 404: the two failure paths that
+  // used to hang the run or spam the log.
+  post: async (opts) => {
+    calls.push(opts);
+    const url = String((opts && opts.url) || '');
+    if (url.indexOf('/video-progress') >= 0 && !limited) {
+      limited = true;
+      const err = new Error('rate limited');
+      err.status = 429;
+      err.body = { retry_after: 0.2 };
+      throw err;
+    }
+    if (url.indexOf('/enroll') >= 0) {
+      const err = new Error('unknown quest');
+      err.status = 404;
+      err.body = { message: 'Unknown quest' };
+      throw err;
+    }
+    return { ok: true };
+  },
   get: async () => ({})
 };
 const chunks = [[[Symbol()], {}, (req) => { req.c = {
@@ -141,6 +161,7 @@ const bundle = fs.readFileSync(path.join(__dirname, '..', 'discord-quest-complet
 vm.runInContext(bundle, context, { filename: 'discord-quest-completer.js' });
 
 const failures = [];
+const loggedNow = () => (panel && panel.querySelector('[data-log]') ? panel.querySelector('[data-log]').textContent : '');
 const panel = body.children.find((node) => node.id === 'dqc-panel');
 if (!panel) failures.push('the panel was not mounted');
 const start = panel && panel.querySelector('#dqc-start');
@@ -151,11 +172,13 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
 
 (async () => {
   if (start && start.handlers.click) start.handlers.click[0]();
-  await new Promise((r) => setTimeout(r, 1500));
+  await new Promise((r) => setTimeout(r, 2600));
   const video = calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('/video-progress') >= 0);
   const enrol = calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('/enroll') >= 0);
-  if (!video.length) failures.push('no video-progress request was made');
+  if (video.length < 2) failures.push('the rate-limited video request was never retried');
   if (!enrol.length) failures.push('the unenrolled game quest was not enrolled');
+  if (loggedNow().indexOf('rate limited') < 0) failures.push('nothing logged the 429');
+  if (loggedNow().indexOf('cannot join') < 0) failures.push('the 404 on enrol was not reported');
   if (video.length && !(video[0].body && typeof video[0].body.timestamp === 'number')) failures.push('the video body has no numeric timestamp');
   const logBox = panel && panel.querySelector('[data-log]');
   const logged = logBox ? logBox.textContent : '';

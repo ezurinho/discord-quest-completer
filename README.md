@@ -83,7 +83,10 @@ application id, and the re-paste guard.
 
 `tools/smoke.js` boots the real bundle in a Node VM with a stub DOM and fake webpack
 modules, presses Start, and asserts that a video quest posts progress and an unenrolled
-quest posts an enrolment. It caught a crash that `node --check` could not see.
+quest posts an enrolment, a completed quest posts a claim with the sealed blob, the
+`?` button counts correctly, Stop stops the traffic, an uncheck sticks across a restart,
+and a 429 plus a 404 on enrolment are survived and reported. It caught a crash that
+`node --check` could not see.
 
 A release is a tag plus `discord-quest-completer.js`. The version lives in
 `package.json` and the `const VERSION` line; `npm run check` fails when they disagree.

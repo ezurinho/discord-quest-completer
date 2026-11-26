@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.2.0 — 2026-11-26
+
+The failure paths get a test too.
+
+- The smoke suite now throws a 429 with `retry_after` at the first video post and a 404
+  at every enrolment, then asserts the retry happened, the 429 was logged, and the 404
+  was reported instead of swallowed. Backoff and error reporting were the two paths
+  nobody had ever executed outside a live client.
+
 ## 3.1.0 — 2026-11-26
 
 - Unchecking every quest ran *every* quest: the guard was `state.selected.size &&`,
