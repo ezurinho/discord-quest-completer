@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 2.6.0
+ * Discord Quest Completer 2.6.1
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '2.6.0';
+  const VERSION = '2.6.1';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -333,7 +333,7 @@
   function cardFor(quest) {
     const task = taskOf(quest);
     const done = Boolean(quest.userStatus && quest.userStatus.completedAt);
-    const live = state.running && !done && task && task.type === 'VIDEO' && state.timers.has(quest.id);
+    const live = state.running && !done && task && task.type === 'VIDEO' && state.selected.has(quest.id);
     const value = task ? questValue(quest, task.key) : 0;
     const target = task ? task.target : 0;
     const pct = target ? Math.min(100, Math.round((value / target) * 100)) : done ? 100 : 0;

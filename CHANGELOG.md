@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.6.1 — 2026-11-26
+
+- `RUNNING` never appeared: the label still checked the per-quest timer map that the
+  single video loop replaced. It now reads the selection and the running flag.
+
 ## 2.6.0 — 2026-11-26
 
 Pick what runs, and never run twice.
