@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 4.0.1
+ * Discord Quest Completer 4.1.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '4.0.1';
+  const VERSION = '4.1.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -298,6 +298,11 @@
     '.dqc-track{height:5px;border-radius:99px;background:rgba(255,255,255,.08);margin-top:6px;overflow:hidden}',
     '.dqc-fill{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#6d4bff,#3ea8ff);transition:width .45s ease}',
     '.dqc-card.done .dqc-fill{background:linear-gradient(90deg,#2dbe78,#7fe4b3)}',
+    '.dqc-pill[data-id]{cursor:pointer}',
+    '.dqc-pill[data-id]:hover{filter:brightness(1.35)}',
+    '.dqc-pause{background:rgba(255,255,255,.16)!important;color:#c9d0dd!important}',
+    '#dqc-foot [data-lanes]{cursor:pointer;color:#98a1b0}',
+    '#dqc-foot [data-lanes]:hover{color:#c3ccff}',
     '.dqc-claim{cursor:pointer;background:rgba(255,170,60,.26)!important;color:#ffd08a!important}',
     '.dqc-claim:hover{background:rgba(255,170,60,.4)!important}',
     '.dqc-meta{font-size:10px;color:#8b93a3;margin-top:4px;letter-spacing:.2px}',
@@ -356,7 +361,7 @@
       '</div></header>',
       '<div id="dqc-body"><div data-list></div></div>',
       '<div id="dqc-log" data-log></div>',
-      '<div id="dqc-foot"><span data-count>—</span><span><b>Ctrl+Shift+I</b> to reopen</span></div>'
+      '<div id="dqc-foot"><span data-count>—</span><span data-lanes title="Click to change the game lane limit"></span><span><b>Ctrl+Shift+I</b> to reopen</span></div>'
     ].join('');
     document.body.appendChild(panel);
     state.ui = panel;
@@ -373,11 +378,18 @@
       }
     } catch (err) { /* a corrupt position is not worth a broken panel */ }
     panel.querySelector('[data-list]').addEventListener('click', (event) => {
-      const hit = event.target && event.target.closest && event.target.closest('.dqc-claim');
-      if (!hit) return;
-      const quest = state.quests.find((q) => q.id === hit.dataset.id);
-      if (quest) claim(quest, true);
+      const closest = event.target && event.target.closest;
+      const claimHit = closest && closest('.dqc-claim');
+      if (claimHit) {
+        const quest = state.quests.find((q) => q.id === claimHit.dataset.id);
+        if (quest) claim(quest, true);
+        return;
+      }
+      const pill = closest && closest('.dqc-pill[data-id]');
+      if (pill) togglePause(pill.dataset.id);
     });
+    const laneBox = panel.querySelector('[data-lanes]');
+    if (laneBox) laneBox.addEventListener('click', () => setGameLimit(gameLimit() % 3 + 1));
     panel.querySelector('[data-list]').addEventListener('change', (event) => {
       const box = event.target;
       if (!box || !box.classList || !box.classList.contains('dqc-pick')) return;
@@ -480,7 +492,8 @@
     const value = task ? questValue(quest, task.key) : 0;
     const target = task ? task.target : 0;
     const pct = target ? Math.min(100, Math.round((value / target) * 100)) : done ? 100 : 0;
-    const label = claimFailed.has(quest.id) ? 'CLAIM'
+    const label = paused.has(quest.id) ? 'PAUSED'
+      : claimFailed.has(quest.id) ? 'CLAIM'
       : blocked.has(quest.id) ? 'UNAVAILABLE'
         : later ? 'SOON'
           : task && task.type === 'ACTIVITY' && !state.key ? 'NEEDS VOICE'
@@ -491,9 +504,9 @@
     const orbs = orbsOf(quest);
     const card = document.createElement('div');
     card.className = 'dqc-card' + (done ? ' done' : live ? ' live' : '');
-    const pill = claimFailed.has(quest.id)
-      ? '<span class="dqc-pill dqc-claim" data-id="' + quest.id + '" title="Claim the reward again">CLAIM</span>'
-      : '<span class="dqc-pill">' + label + '</span>';
+    const pillClass = paused.has(quest.id) ? ' dqc-pause' : claimFailed.has(quest.id) ? ' dqc-claim' : '';
+    const pillTitle = paused.has(quest.id) ? 'Resume this quest' : claimFailed.has(quest.id) ? 'Claim the reward again' : 'Pause this quest';
+    const pill = '<span class="dqc-pill' + pillClass + '" data-id="' + quest.id + '" title="' + pillTitle + '">' + label + '</span>';
     card.innerHTML = '<input type="checkbox" class="dqc-pick" data-id="' + quest.id + '"' +
       (supported ? '' : ' disabled') + (state.selected.has(quest.id) ? ' checked' : '') + '>' +
       '<div class="dqc-icon">' + icon + '</div>' +
@@ -518,6 +531,7 @@
         blocked.has(quest.id) ? 1 : 0,
         state.selected.has(quest.id) ? 1 : 0,
         claimFailed.has(quest.id) ? 1 : 0,
+        paused.has(quest.id) ? 1 : 0,
         startsAt(quest) ? 1 : 0,
         state.running ? 1 : 0,
         state.key ? 1 : 0
@@ -537,6 +551,11 @@
       + (orbs ? ' · ' + orbs + ' Orbs' : '')
       + (wait ? ' · rate limited, ' + mmss + ' left' : '')
       + (suspended ? ' · QUEST ACCESS SUSPENDED' : '');
+    const laneBox = state.ui.querySelector('[data-lanes]');
+    if (laneBox) {
+      laneBox.textContent = 'video ' + (state.video ? 1 : 0) + '/1 · game ' + activeGames.size + '/' + gameLimit()
+        + (paused.size ? ' · ' + paused.size + ' paused' : '');
+    }
   }
 
   function render() {
@@ -726,6 +745,7 @@
       if (blocked.has(quest.id)) return false;
       // Unchecking a card mid-run used to leave its video loop alive until the next paste.
       if (!state.selected.has(quest.id)) return false;
+      if (paused.has(quest.id)) return false;
       if (!quest.userStatus || !quest.userStatus.enrolledAt) return false;
       const task = taskOf(quest);
       return task && task.type === 'VIDEO' && questValue(quest, task.key) < task.target;
@@ -901,13 +921,108 @@
     }
   }
 
-  function pulseGame(mods, quest, task) {
+  // ---- lanes -----------------------------------------------------------
+  // Two lanes, the way the client itself splits these tasks. Video is a single cadence for
+  // the whole account and stays at one: five parallel loops are five times the request rate
+  // against the same bucket, which is what earns a 34-minute 429. Game is bounded by how
+  // many stand-ins are alive at once, because the client schedules a heartbeat per process.
+  const activeGames = new Set();
+  const gameApp = new Map();
+  const paused = new Set();
+  const GAME_LIMIT_KEY = 'dqc-game-limit';
+
+  function gameLimit() {
+    try {
+      const saved = Number(localStorage.getItem(GAME_LIMIT_KEY));
+      if (saved >= 1 && saved <= 3) return saved;
+    } catch (err) { /* private mode */ }
+    return 1;
+  }
+
+  function setGameLimit(next) {
+    try { localStorage.setItem(GAME_LIMIT_KEY, String(next)); } catch (err) { /* private mode */ }
+    if (state.mods) pumpGames(state.mods);
+    state.sig = '';
+    render();
+  }
+
+  function pausedLoad() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('dqc-paused') || '[]');
+      if (Array.isArray(saved)) saved.forEach((id) => paused.add(String(id)));
+    } catch (err) { /* a corrupt list is an empty list */ }
+  }
+
+  function pausedSave() {
+    try { localStorage.setItem('dqc-paused', JSON.stringify(Array.from(paused))); } catch (err) { /* private mode */ }
+  }
+
+  // Pausing one quest is not stopping the run: the other lane keeps its cadence and the
+  // game lane backfills the freed slot with the next quest in the queue.
+  function togglePause(id) {
+    const quest = state.quests.find((q) => q.id === id);
+    if (!quest) return;
+    const name = taskOf(quest) ? taskOf(quest).name : id;
+    if (paused.has(id)) {
+      paused.delete(id);
+      log('resumed ' + name, 'ok');
+    } else {
+      paused.add(id);
+      log('paused ' + name + ' · the rest keeps running');
+    }
+    pausedSave();
+    if (state.mods) pumpGames(state.mods);
+    state.sig = '';
+    render();
+  }
+
+  function releaseGame(mods, id) {
+    const appId = gameApp.get(id);
+    gameApp.delete(id);
+    activeGames.delete(id);
+    if (!appId || !mods) return;
+    // Two quests can name the same application; the process stays while another quest on
+    // this lane still wants it.
+    if (Array.from(gameApp.values()).indexOf(appId) >= 0) return;
+    const game = standIns.get(appId);
+    if (!game) return;
+    standIns.delete(appId);
+    dispatchGames(mods, [], [game]);
+  }
+
+  function activateGame(mods, quest, task) {
+    if (!task.appId) return;
     const game = fakeGame(task.appId);
-    // Announcing an existing stand-in again is noise; a new one has to be announced so
-    // the client schedules its heartbeat.
+    gameApp.set(quest.id, task.appId);
+    activeGames.add(quest.id);
     if (game.__dqcLive) return;
     game.__dqcLive = true;
     dispatchGames(mods, [game], []);
+  }
+
+  // Retire what no longer belongs on the lane, then fill the free slots up to the limit.
+  function pumpGames(mods) {
+    if (!mods) return;
+    for (const id of Array.from(activeGames)) {
+      const quest = state.quests.find((q) => q.id === id);
+      const task = quest && taskOf(quest);
+      const alive = Boolean(quest) && !(quest.userStatus && quest.userStatus.completedAt)
+        && !blocked.has(id) && !paused.has(id) && state.selected.has(id)
+        && task && isSupported(task, quest);
+      if (!alive) releaseGame(mods, id);
+    }
+    if (!state.running) return;
+    const limit = gameLimit();
+    for (const quest of state.quests) {
+      if (activeGames.size >= limit) break;
+      if (activeGames.has(quest.id) || paused.has(quest.id) || blocked.has(quest.id)) continue;
+      if (!state.selected.has(quest.id)) continue;
+      if (quest.userStatus && quest.userStatus.completedAt) continue;
+      const task = taskOf(quest);
+      if (!task || (task.type !== 'GAME' && task.type !== 'STREAM')) continue;
+      if (!isSupported(task, quest)) continue;
+      activateGame(mods, quest, task);
+    }
   }
 
   async function run() {
@@ -991,23 +1106,21 @@
       } else {
         log(task.name + ' · ' + task.type + ' · ' + value + '/' + task.target);
       }
-      // The stand-in is registered even when the enrolment is still in flight;
-      // waiting for the next pulse delayed every play quest by up to a minute.
-      if (task.type === 'GAME' || task.type === 'STREAM') pulseGame(mods, quest, task);
       if (task.type === 'ACTIVITY') beat(mods, quest, task).catch(() => {});
     }
+    pumpGames(mods);
     startVideos();
     state.pulse = setInterval(() => {
       state.quests = allQuests(mods);
       const pending = state.quests.filter((q) => !(q.userStatus && q.userStatus.completedAt));
       for (const quest of pending) {
         const task = taskOf(quest);
-        if (task && !blocked.has(quest.id)) {
+        if (task && !blocked.has(quest.id) && !paused.has(quest.id)) {
           if (task.type === 'ACTIVITY') beat(mods, quest, task).catch(() => {});
-          else if (task.type !== 'VIDEO') pulseGame(mods, quest, task);
         }
-        if (task) startVideos();
       }
+      pumpGames(mods);
+      startVideos();
       for (const quest of pending) {
         if (quest.userStatus && quest.userStatus.completedAt && !quest.userStatus.claimedAt && !claimed.has(quest.id) && !claimFailed.has(quest.id)) {
           claimed.add(quest.id);
@@ -1026,6 +1139,8 @@
     // Withdraw the stand-ins before restoring the store, so the client stops scheduling
     // heartbeats for a process that no longer exists.
     if (state.mods && standIns.size) dispatchGames(state.mods, [], Array.from(standIns.values()));
+    activeGames.clear();
+    gameApp.clear();
     unpatchRunStore(state.mods);
     if (state.video) clearTimeout(state.video);
     state.video = null;
@@ -1047,6 +1162,21 @@
   });
 
   window.__dqcStop = stop;
+  // The console is the interface here, so the lanes are readable and drivable from it too.
+  window.__dqc = {
+    stop,
+    pause: (id) => { if (!paused.has(id)) togglePause(id); },
+    resume: (id) => { if (paused.has(id)) togglePause(id); },
+    lanes: () => ({
+      video: state.video ? 1 : 0,
+      videoLimit: 1,
+      game: activeGames.size,
+      gameLimit: gameLimit(),
+      active: Array.from(activeGames),
+      paused: Array.from(paused)
+    })
+  };
+  pausedLoad();
   mount();
   log(NAME + ' ' + VERSION + ' ready · press Start', 'ok');
   state.ui.querySelector('#dqc-foot span:last-child').textContent = 'Ctrl+Shift+I to reopen';

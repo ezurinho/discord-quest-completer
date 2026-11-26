@@ -36,12 +36,15 @@ const invariants = [
   ['the stand-in fills unknown string fields', 'new Proxy(game'],
   ['a quest access suspension stops the run', 'questAccessSuspendedUntil'],
   ['a quest that has not started is left alone', 'startsAt'],
-  ['a failed claim is manual, not a loop', 'claimFailed']
+  ['a failed claim is manual, not a loop', 'claimFailed'],
+  ['the game lane is bounded', 'pumpGames'],
+  ['one quest can be paused on its own', 'togglePause'],
+  ['the video lane stays single-cadence', 'videoLimit: 1']
 ];
 for (const [name, needle] of invariants) {
   if (source.indexOf(needle) < 0) failures.push('regression: ' + name);
 }
-if (lines.length > 1200) failures.push('grew past 1200 lines: keep it pasteable and readable');
+if (lines.length > 1300) failures.push('grew past 1300 lines: keep it pasteable and readable');
 
 try {
   execFileSync(process.execPath, ['--check', file], { stdio: 'pipe' });

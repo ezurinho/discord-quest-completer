@@ -41,6 +41,25 @@ real Go Live with another person in the channel, and achievements are validated 
 game rather than the client. Without a voice channel, `PLAY_ACTIVITY` shows **NEEDS
 VOICE** instead, because the heartbeat key is built from the call you are in.
 
+### Lanes
+
+The engine runs two lanes. **Video** is one cadence for the whole account: one quest posts
+progress at a time, every 7–9.5 s, because five parallel loops are five times the request rate
+against the same bucket. **Game** is bounded by how many stand-in processes are alive at once
+(1 by default, up to 3), since Discord schedules a heartbeat per process. A finished, blocked or
+unticked quest releases its slot and the next one in the queue takes it.
+
+Click the `game n/n` readout in the footer to raise the limit. Click a card's status pill to
+pause **that** quest: the other lane keeps its rhythm, the game lane backfills the freed slot,
+and the pill reads **PAUSED** until you click it again. Pauses survive a re-paste, and the
+console has the same controls:
+
+```js
+__dqc.lanes()        // { video, videoLimit, game, gameLimit, active, paused }
+__dqc.pause(id)      // stop driving one quest
+__dqc.resume(id)     // put it back in the queue
+```
+
 No progress claim is ever ahead of the player: a video timestamp is capped at the value the
 run started from plus the seconds elapsed since, so a lagging store cannot make the script
 report more video than the clock allows.

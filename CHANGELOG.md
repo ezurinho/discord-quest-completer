@@ -1,5 +1,29 @@
 # Changelog
 
+## 4.1.0 — 2026-11-26
+
+Two lanes, a bound on each, and a pause that only stops one quest.
+
+- **The engine is split into a video lane and a game lane.** Video stays at one cadence for
+  the whole account — that rule does not move: five parallel loops are five times the request
+  rate against the same bucket, which is what earns a 34-minute 429. What the split buys is
+  that a slow video quest no longer delays a play quest, and vice versa.
+- **The game lane is bounded.** Discord schedules one heartbeat per stand-in process, so
+  `pumpGames` keeps at most `gameLimit()` of them alive (1 by default), retires the ones whose
+  quest completed, was blocked or was unticked, and backfills the free slot from the queue.
+  The limit is saved in `localStorage` under `dqc-game-limit`; clicking the `game n/n` readout
+  in the footer cycles it 1 → 2 → 3.
+- **Pausing one quest does not stop the run.** Clicking a card's status pill pauses that quest
+  alone: the video cadence keeps its rhythm on the others, the game lane releases that process
+  and starts the next quest in its place, and the pill reads **PAUSED** until it is clicked
+  again. The list is saved in `localStorage` under `dqc-paused` and survives a re-paste.
+- `window.__dqc` exposes `stop`, `pause(id)`, `resume(id)` and `lanes()` for the console, so a
+  paused quest can be resumed without hunting for the card.
+- The footer carries both lanes: `video 1/1 · game 1/1`, plus the paused count.
+- The smoke suite starts two playable game quests on a limit of one, then asserts the lane
+  never exceeds its limit, that the video lane is still single-cadence, that pausing the active
+  quest frees its process and backfills the slot, and that resuming clears the pause.
+
 ## 4.0.1 — 2026-11-26
 
 The new smoke case found a real one on its first run.

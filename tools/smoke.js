@@ -91,6 +91,13 @@ const quests = new Map([
     },
     userStatus: { enrolledAt: '2026-01-01T00:00:00Z', completedAt: '2026-01-02T00:00:00Z', progress: { WATCH_VIDEO: { value: 30 } } }
   }],
+  // A second playable quest, so the game lane has a queue to backfill from when the one
+  // in its single slot is paused.
+  ['q-game2', {
+    id: 'q-game2',
+    config: { messages: { questName: 'Second game' }, taskConfigV2: { tasks: { PLAY_ON_DESKTOP: { target: 15, applications: [{ id: '1111' }] } } } },
+    userStatus: { enrolledAt: '2026-01-01T00:00:00Z', progress: {} }
+  }],
   // Starts in the future: the card says SOON, the box is dead, no request may name it.
   ['q-soon', {
     id: 'q-soon',
@@ -286,16 +293,33 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
   if (!announced) failures.push('no game was announced to the client');
   else {
     if (!Array.isArray(announced.games)) failures.push('the game event has no games array');
-    else if (!announced.games.some((g) => String(g.id) === '999')) failures.push('the stand-in is missing from the games array');
+    else if (!announced.games.some((g) => ['999', '1111', '888'].indexOf(String(g.id)) >= 0)) failures.push('the stand-in is missing from the games array');
     // Discord lowercases game fields in its own handler; an undefined one throws there.
     if (typeof announced.added[0].distributor !== 'string') failures.push('the stand-in has no distributor string');
     if (announced.added[0].someFieldNobodySets !== '') failures.push('an unknown string field is not an empty string');
+  }
+  const lanes = window.__dqc && window.__dqc.lanes ? window.__dqc.lanes() : null;
+  if (!lanes) failures.push('the lane snapshot is not exposed');
+  else {
+    if (lanes.videoLimit !== 1) failures.push('the video lane is not single-cadence');
+    if (lanes.game > lanes.gameLimit) failures.push('the game lane exceeded its limit');
+    if (lanes.game < 1) failures.push('no game quest was started on its lane');
+    const target = lanes.active[0];
+    window.__dqc.pause(target);
+    await new Promise((r) => setTimeout(r, 400));
+    const held = window.__dqc.lanes();
+    if (held.paused.indexOf(target) < 0) failures.push('the pause did not stick');
+    if (held.active.indexOf(target) >= 0) failures.push('a paused quest kept its process');
+    if (held.game > held.gameLimit) failures.push('the backfill exceeded the game limit');
+    window.__dqc.resume(target);
+    await new Promise((r) => setTimeout(r, 400));
+    if (window.__dqc.lanes().paused.length) failures.push('resume did not clear the pause');
   }
   if (diag && diag.handlers.click) diag.handlers.click[0]();
   await new Promise((r) => setTimeout(r, 200));
   const after = logBox ? logBox.textContent : '';
   if (after.indexOf('blocked until') < 0) failures.push('the diagnosis printed nothing about the block');
-  if (after.indexOf('7 quests') < 0) failures.push('the diagnosis miscounted the quests');
+  if (after.indexOf('8 quests') < 0) failures.push('the diagnosis miscounted the quests');
   if (stop && stop.handlers.click) stop.handlers.click[0]();
   const before = calls.length;
   await new Promise((r) => setTimeout(r, 800));
@@ -320,6 +344,6 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
     console.error('log was: ' + (panel && panel.querySelector('[data-log]') ? panel.querySelector('[data-log]').textContent.slice(0, 400) : 'no log node'));
     process.exit(1);
   }
-  console.log('smoke (' + (useName ? 'displayName' : 'prototype') + '): ok, ' + calls.length + ' requests, ' + video.length + ' video, ' + enrol.length + ' enrol, ' + claim.length + ' claim');
+  console.log('smoke (' + (useName ? 'displayName' : 'prototype') + '): ok, ' + calls.length + ' requests, ' + video.length + ' video, ' + enrol.length + ' enrol, ' + claim.length + ' claim, lanes game ' + (lanes ? lanes.game + '/' + lanes.gameLimit + ' video ' + lanes.video + '/' + lanes.videoLimit : 'none'));
   process.exit(0);
 })();
