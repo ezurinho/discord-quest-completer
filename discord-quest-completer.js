@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 1.2.0
+ * Discord Quest Completer 1.3.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,55 +9,106 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '1.2.0';
+  const VERSION = '1.3.0';
   const VIDEO_STEP = 5;
   const VIDEO_TICK = 900;
-  const ENROLL_ON_START = true;
-
+  // Pasted twice? The old panel goes, not a second one: two copies would double
+  // every progress request.
   const previous = document.getElementById('dqc-panel');
   if (previous) previous.remove();
 
   const state = { running: false, quests: [], lines: [], timers: new Map(), pulse: null, ui: null };
-
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   // ---- client internals -------------------------------------------------
-  function webpackModules() {
+  // The mangled export keys (A, Bo, h, Ay) change between Discord builds, so each
+  // module is found by a method that cannot be anything else, and the key is read
+  // from the object that actually has it.
+  function findModule(predicate) {
     const chunk = window.webpackChunkdiscord_app;
     if (!chunk) return null;
-    const found = [];
-    const key = 'dqc_' + Math.random().toString(36).slice(2);
-    chunk.push([[key], {}, (req) => found.push(req)]);
-    const index = chunk.findIndex((entry) => entry && entry[0] && entry[0][0] === key);
-    if (index >= 0) chunk.splice(index, 1);
-    return found.length ? found[0] : null;
+    const req = chunk.push([[Symbol()], {}, (r) => r]);
+    chunk.pop();
+    const hit = Object.values(req.c || {}).find((mod) => {
+      try { return predicate(mod && mod.exports); } catch (err) { return false; }
+    });
+    return hit ? hit.exports : null;
   }
-
-  function findBy(filter) {
-    const req = webpackModules();
-    if (!req || !req.c) return null;
-    for (const id of Object.keys(req.c)) {
-      const exports = req.c[id] && req.c[id].exports;
-      if (!exports) continue;
-      let hit = null;
-      try { hit = filter(exports); } catch (err) { hit = null; }
-      if (hit) return hit;
+  function pick(exports, keys, protoMethod) {
+    if (!exports) return null;
+    for (const key of keys) {
+      const value = exports[key];
+      if (value && value.__proto__ && typeof value.__proto__[protoMethod] === 'function') return value;
     }
     return null;
   }
-
   function modules() {
+    const stream = findModule((e) => pick(e, ['A', 'Z'], 'getStreamerActiveStreamMetadata'));
+    const quests = findModule((e) => pick(e, ['A', 'Z'], 'getQuest'));
+    const dispatcher = findModule((e) => pick(e, ['h', 'Z'], 'flushWaitQueue'));
+    const games = findModule((e) => (e && e.Ay && typeof e.Ay.getRunningGames === 'function') || (e && e.ZP && typeof e.ZP.getRunningGames === 'function'));
+    const api = findModule((e) => (e && e.Bo && typeof e.Bo.get === 'function') || (e && e.tn && typeof e.tn.get === 'function'));
     return {
-      dispatcher: findBy((e) => {
-        const d = e && (e.default || e);
-        return d && typeof d.dispatch === 'function' && typeof d.subscribe === 'function' ? d : null;
-      }),
-      http: findBy((e) => (e && typeof e.get === 'function' && typeof e.post === 'function' ? e : null)),
-      store: findBy((e) => {
-        const s = e && (e.default || e);
-        return s && typeof s.getQuest === 'function' ? s : null;
-      })
+      questStore: pick(quests, ['A', 'Z'], 'getQuest'),
+      runStore: (games && games.Ay) || (games && games.ZP),
+      dispatcher: pick(dispatcher, ['h', 'Z'], 'flushWaitQueue'),
+      api: (api && api.Bo) || (api && api.tn),
+      streamStore: pick(stream, ['A', 'Z'], 'getStreamerActiveStreamMetadata')
     };
   }
-
+  function allQuests(mods) {
+    const raw = mods.questStore && mods.questStore.quests;
+    if (!raw) return [];
+    return raw instanceof Map ? Array.from(raw.values()) : Object.values(raw);
+  }
+  function configOf(quest) {
+    return (quest && quest.config && (quest.config.taskConfig || quest.config.taskConfigV2)) || {};
+  }
+  function taskOf(quest) {
+    const config = configOf(quest);
+    const tasks = (config && config.tasks) || {};
+    const keys = Object.keys(tasks);
+    if (!keys.length) return null;
+    const has = (needle) => keys.find((key) => key.indexOf(needle) >= 0);
+    const key = has('PLAY') || has('STREAM') || has('VIDEO') || has('ACTIVITY') || has('WATCH') || keys[0];
+    const type = has('PLAY') ? 'GAME' : has('VIDEO') || has('WATCH') ? 'VIDEO' : has('STREAM') ? 'STREAM' : has('ACTIVITY') ? 'ACTIVITY' : 'GAME';
+    const name = (quest.config.messages && quest.config.messages.questName) || (quest.config.application && quest.config.application.name) || quest.id;
+    return { key, name, type, target: Number(tasks[key] && tasks[key].target) || 0 };
+  }
+  function questValue(quest, key) {
+    const progress = quest.userStatus && quest.userStatus.progress;
+    return Number(progress && progress[key] && progress[key].value) || 0;
+  }
+  // One request at a time, and a 429 pauses the whole queue: Discord answers with
+  // retry_after in ms, and ignoring it turns a warning into a ban.
+  const traffic = { queue: [], busy: false, post: null };
+  async function enqueue(url, body) {
+    return new Promise((resolve, reject) => {
+      traffic.queue.push({ url, body, resolve, reject });
+      drain();
+    });
+  }
+  async function drain() {
+    if (traffic.busy) return;
+    traffic.busy = true;
+    while (traffic.queue.length) {
+      if (!state.running) { traffic.queue = []; break; }
+      const req = traffic.queue.shift();
+      try {
+        req.resolve(await traffic.post({ url: req.url, body: req.body }));
+      } catch (err) {
+        if (err && err.status === 429) {
+          const wait = Number(err.body && err.body.retry_after) || 5;
+          traffic.queue.unshift(req);
+          log('rate limited: waiting ' + wait + 's', 'err');
+          await sleep(wait * 1000 + 500);
+        } else {
+          req.reject(err);
+        }
+      }
+      await sleep(300);
+    }
+    traffic.busy = false;
+  }
   // ---- panel ------------------------------------------------------------
   const CSS = [
     '#dqc-panel{position:fixed;right:20px;top:64px;width:344px;z-index:2147483000;color:#e7e9ee;font:13px/1.45 "Inter",system-ui,sans-serif;border-radius:16px;border:1px solid rgba(255,255,255,.09);background:linear-gradient(180deg,rgba(32,34,40,.97),rgba(22,23,28,.98));box-shadow:0 24px 60px -12px rgba(0,0,0,.7),0 0 0 1px rgba(0,0,0,.4);overflow:hidden;backdrop-filter:blur(14px)}',
@@ -125,53 +176,6 @@
     box.scrollTop = box.scrollHeight;
   }
 
-  function tasksOf(quest) {
-    return (quest && quest.config && quest.config.taskConfig && quest.config.taskConfig.tasks) || {};
-  }
-
-  function taskValue(quest, key) {
-    const p = quest && quest.userStatus && quest.userStatus.progress;
-    return (p && p[key] && p[key].value) || 0;
-  }
-
-  function cardFor(quest) {
-    const tasks = tasksOf(quest);
-    const key = Object.keys(tasks)[0] || '';
-    const target = (tasks[key] && tasks[key].target) || 0;
-    const type = (tasks[key] && tasks[key].type) || '';
-    const value = taskValue(quest, key);
-    const done = Boolean(quest.userStatus && quest.userStatus.completedAt);
-    const live = state.running && !done && type === 'WATCH_VIDEO';
-    const pct = target ? Math.min(100, Math.round((value / target) * 100)) : done ? 100 : 0;
-    const card = document.createElement('div');
-    card.className = 'dqc-card' + (done ? ' done' : live ? ' live' : '');
-    const icon = done ? ICON.game : /VIDEO/.test(type) ? ICON.video : /PLAY/.test(type) ? ICON.game : ICON.clock;
-    card.innerHTML = '<div class="dqc-icon">' + icon + '</div>' +
-      '<div class="dqc-main"><div class="dqc-name"><span class="dqc-pill">' + (done ? 'DONE' : live ? 'RUNNING' : 'QUEUE') + '</span>' +
-      esc((quest.config && quest.config.messages && quest.config.messages.questName) || quest.id) + '</div>' +
-      '<div class="dqc-track"><div class="dqc-fill" style="width:' + pct + '%"></div></div>' +
-      '<div class="dqc-meta">' + (target ? value + ' / ' + target + ' s' : 'waiting for the client') + (pct ? ' · ' + pct + '%' : '') + '</div></div>';
-    return card;
-  }
-
-  function render() {
-    const list = state.ui && state.ui.querySelector('[data-list]');
-    if (!list) return;
-    list.textContent = '';
-    if (!state.quests.length) {
-      const empty = document.createElement('div');
-      empty.className = 'dqc-meta';
-      empty.style.padding = '14px 6px';
-      empty.textContent = 'No quests on this account right now.';
-      list.appendChild(empty);
-      return;
-    }
-    for (const quest of state.quests) list.appendChild(cardFor(quest));
-    const done = state.quests.filter((q) => q.userStatus && q.userStatus.completedAt).length;
-    const foot = state.ui.querySelector('[data-count]');
-    if (foot) foot.textContent = done + ' / ' + state.quests.length + ' claimed';
-  }
-
   function mount() {
     if (state.ui) return state.ui;
     const style = document.createElement('style');
@@ -219,27 +223,67 @@
   }
 
   // ---- work ------------------------------------------------------------
-  function questList(mods) {
-    const store = mods.store;
-    if (!store) return [];
-    const raw = typeof store.getQuests === 'function' ? store.getQuests() : store.quests;
-    return Object.values(raw || {});
+  function cardFor(quest) {
+    const task = taskOf(quest);
+    const done = Boolean(quest.userStatus && quest.userStatus.completedAt);
+    const live = state.running && !done && task && task.type === 'VIDEO' && state.timers.has(quest.id);
+    const value = task ? questValue(quest, task.key) : 0;
+    const target = task ? task.target : 0;
+    const pct = target ? Math.min(100, Math.round((value / target) * 100)) : done ? 100 : 0;
+    const label = done ? 'DONE' : live ? 'RUNNING' : quest.userStatus && quest.userStatus.enrolledAt ? 'QUEUE' : 'NOT JOINED';
+    const icon = task && task.type === 'VIDEO' ? ICON.video : task && (task.type === 'GAME' || task.type === 'ACTIVITY') ? ICON.game : ICON.clock;
+    const card = document.createElement('div');
+    card.className = 'dqc-card' + (done ? ' done' : live ? ' live' : '');
+    card.innerHTML = '<div class="dqc-icon">' + icon + '</div>' +
+      '<div class="dqc-main"><div class="dqc-name"><span class="dqc-pill">' + label + '</span>' +
+      esc(task ? task.name : quest.id) + '</div>' +
+      '<div class="dqc-track"><div class="dqc-fill" style="width:' + pct + '%"></div></div>' +
+      '<div class="dqc-meta">' + (target ? value + ' / ' + target + ' s' + (pct ? ' · ' + pct + '%' : '') : 'waiting for a task config') + '</div></div>';
+    return card;
   }
 
-  async function enroll(mods, quest) {
-    if (!ENROLL_ON_START || !mods.http || quest.userStatus) return;
+  function render() {
+    const list = state.ui && state.ui.querySelector('[data-list]');
+    if (!list) return;
+    list.textContent = '';
+    if (!state.quests.length) {
+      const empty = document.createElement('div');
+      empty.className = 'dqc-meta';
+      empty.style.padding = '14px 6px';
+      empty.textContent = 'No quests on this account right now.';
+      list.appendChild(empty);
+      return;
+    }
+    for (const quest of state.quests) list.appendChild(cardFor(quest));
+    const done = state.quests.filter((q) => q.userStatus && q.userStatus.completedAt).length;
+    const count = state.ui.querySelector('[data-count]');
+    if (count) count.textContent = done + ' / ' + state.quests.length + ' claimed';
+  }
+
+  async function enroll(quest) {
+    if (quest.userStatus && quest.userStatus.enrolledAt) return;
     try {
-      await mods.http.post({ url: '/quests/' + quest.id + '/enroll' });
-      log('enrolled ' + quest.id, 'ok');
+      await enqueue('/quests/' + quest.id + '/enroll', { location: 1 });
+      log('joined ' + (taskOf(quest) ? taskOf(quest).name : quest.id), 'ok');
     } catch (err) {
-      log('enroll failed: ' + err.message, 'err');
+      log('enroll failed: ' + (err && err.message ? err.message : err), 'err');
     }
   }
 
-  function videoTask(quest) {
-    const tasks = tasksOf(quest);
-    const key = Object.keys(tasks).find((k) => tasks[k] && tasks[k].type === 'WATCH_VIDEO');
-    return key ? { key, target: tasks[key].target || 60 } : null;
+  async function videoTick(quest, task) {
+    const current = questValue(quest, task.key);
+    if (current >= task.target) {
+      log('done ' + task.name, 'ok');
+      stopVideo(quest.id);
+      return;
+    }
+    const next = Math.min(task.target, current + VIDEO_STEP);
+    try {
+      await enqueue('/quests/' + quest.id + '/video-progress', { timestamp: next });
+      log(task.name + ' · ' + next + '/' + task.target + ' s');
+    } catch (err) {
+      log('video error: ' + (err && err.message ? err.message : err), 'err');
+    }
   }
 
   function stopVideo(id) {
@@ -248,48 +292,33 @@
     state.timers.delete(id);
   }
 
-  async function videoTick(mods, quest) {
-    const task = videoTask(quest);
-    if (!task) return;
-    const current = taskValue(quest, task.key);
-    if (current >= task.target) {
-      log('video done ' + quest.id, 'ok');
-      stopVideo(quest.id);
-      return;
-    }
-    const next = Math.min(task.target, current + VIDEO_STEP);
-    try {
-      await mods.http.post({ url: '/quests/' + quest.id + '/video-progress', body: { timestamp: next } });
-      log('video ' + next + '/' + task.target + ' s · ' + (quest.config && quest.config.messages && quest.config.messages.questName || quest.id));
-      state.quests = questList(mods);
-      render();
-    } catch (err) {
-      log('video error: ' + err.message, 'err');
-      stopVideo(quest.id);
-    }
-  }
-
-  function startVideo(mods, quest) {
+  function startVideo(quest, task) {
     if (state.timers.has(quest.id)) return;
-    videoTick(mods, quest);
-    state.timers.set(quest.id, setInterval(() => videoTick(mods, quest), VIDEO_TICK));
+    videoTick(quest, task);
+    state.timers.set(quest.id, setInterval(() => videoTick(quest, task), VIDEO_TICK));
   }
 
-  function fakeGame() {
+  // The client believes a game is running when the store says so and the running
+  // games event fired; both are needed, the event alone gets ignored by some quests.
+  function fakeGame(appId) {
     const now = Date.now();
-    return { id: '000000000000000000', name: 'Quest Activity', type: 0, createdAt: now, executables: [{ os: 'win32', name: 'Quest Activity', application_id: '000000000000000000' }], sessionId: 'dqc-' + now };
+    return { pid: 1000 + Math.floor(Math.random() * 8000), id: appId || '000000000000000000', name: 'Quest Activity', start: now, createdAt: now };
   }
 
-  function gameTask(quest) {
-    const tasks = tasksOf(quest);
-    const key = Object.keys(tasks).find((k) => tasks[k] && /PLAY/.test(tasks[k].type));
-    return key ? { key, target: tasks[key].target || 900 } : null;
+  function patchRunStore(mods) {
+    const store = mods.runStore;
+    if (!store || store.__dqcPatched || typeof store.getRunningGames !== 'function') return;
+    const real = store.getRunningGames;
+    const fake = [fakeGame()];
+    store.getRunningGames = function () { return real.call(store).concat(fake); };
+    store.__dqcPatched = true;
   }
 
-  function pulseGame(mods, quest) {
-    if (!gameTask(quest)) return;
+  function pulseGame(mods, quest, task) {
+    if (!mods.dispatcher) return;
+    const game = fakeGame(quest.config && quest.config.application && quest.config.application.id);
     try {
-      mods.dispatcher.dispatch({ type: 'RUNNING_GAMES_CHANGE', added: [fakeGame()], removed: [] });
+      mods.dispatcher.dispatch({ type: 'RUNNING_GAMES_CHANGE', added: [game], removed: [] });
     } catch (err) {
       log('game dispatch failed: ' + err.message, 'err');
     }
@@ -297,33 +326,40 @@
 
   async function run() {
     if (state.running) return;
-    state.running = true;
     const panel = mount();
     panel.querySelector('#dqc-start').disabled = true;
     panel.querySelector('#dqc-stop').disabled = false;
-    log('looking for client modules');
+    log('reading the client modules');
     const mods = modules();
-    if (!mods.store || !mods.http) {
-      log('modules not found: reload the app (Ctrl+R) and paste again', 'err');
+    if (!mods.questStore || !mods.api) {
+      log('modules not found: reload (Ctrl+R) and paste again', 'err');
       stop();
       return;
     }
-    state.quests = questList(mods);
+    state.running = true;
+    traffic.post = mods.api.post.bind(mods.api);
+    patchRunStore(mods);
+    state.quests = allQuests(mods);
     render();
     log(state.quests.length + ' quests on this account');
     for (const quest of state.quests) {
       if (quest.userStatus && quest.userStatus.completedAt) continue;
-      await enroll(mods, quest);
-      if (videoTask(quest)) startVideo(mods, quest);
-      if (gameTask(quest)) pulseGame(mods, quest);
+      await enroll(quest);
+      const task = taskOf(quest);
+      if (!task) continue;
+      if (task.type === 'VIDEO') startVideo(quest, task);
+      else pulseGame(mods, quest, task);
     }
     state.pulse = setInterval(() => {
-      for (const quest of state.quests) {
-        if (quest.userStatus && quest.userStatus.completedAt) continue;
-        if (gameTask(quest)) pulseGame(mods, quest);
+      state.quests = allQuests(mods);
+      const pending = state.quests.filter((q) => !(q.userStatus && q.userStatus.completedAt));
+      for (const quest of pending) {
+        const task = taskOf(quest);
+        if (task && task.type !== 'VIDEO') pulseGame(mods, quest, task);
+        if (task && task.type === 'VIDEO' && !state.timers.has(quest.id)) startVideo(quest, task);
       }
-      state.quests = questList(mods);
       render();
+      if (!pending.length) stop();
     }, 15000);
     log('running: leave the app open', 'ok');
   }

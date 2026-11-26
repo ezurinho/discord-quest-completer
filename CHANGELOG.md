@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.3.0 — 2026-11-26
+
+Finds the modules the client actually ships.
+
+- The old search matched the first module that merely mentioned `getQuest`, which was
+  the i18n table: the panel listed two quests named `undefined` and posted to
+  `https://discord.com/[object Object]`. Modules are now identified by a prototype
+  method (`getQuest`, `flushWaitQueue`, `getStreamerActiveStreamMetadata`) and their
+  mangled export key is read from the object that has it.
+- Task config falls back to `taskConfigV2`, so quests without `taskConfig` are read
+  instead of skipped.
+- Requests are serialised through one queue with 300 ms spacing and a real 429 wait
+  from `retry_after`, instead of firing in parallel.
+- Enrolment sends `{ location: 1 }`, the body the client sends.
+
 ## 1.2.0 — 2026-11-26
 
 A panel worth looking at.
