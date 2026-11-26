@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.9.0 — 2026-11-26
+
+The cooldown survives a reload, and repeated strikes escalate.
+
+- `pauseUntil` is saved in `localStorage` (`dqc-pause`). Re-pasting during a 34-minute
+  limit used to start the count from zero and earn another one; now the panel resumes
+  the old cooldown and says how long is left.
+- Every further 429 on the same session multiplies the wait (up to 4x); the log names
+  the strike, so a repeating pattern is visible instead of a single silent pause.
+- Pasting while limited logs `cooldown from a previous paste: N min left` before it
+  reads anything.
+
 ## 1.8.0 — 2026-11-26
 
 One cadence for the account, and the cooldown is visible.

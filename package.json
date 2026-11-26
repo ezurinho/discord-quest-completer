@@ -1,6 +1,6 @@
 {
   "name": "discord-quest-completer",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "private": true,
   "description": "Paste-in-the-console script that completes Discord Quests from the desktop app",
   "scripts": {

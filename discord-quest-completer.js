@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 1.8.0
+ * Discord Quest Completer 1.9.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '1.8.0';
+  const VERSION = '1.9.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -24,6 +24,22 @@
   // burning the queue. A 429 pauses every video, not just the one that hit it.
   const blocked = new Set();
   let pauseUntil = 0;
+  let limits = 0;
+
+  // The cooldown belongs to the account, not to this paste: reloading the page during a
+  // 34-minute limit and pressing Start used to restart the count from zero and earn
+  // another one.
+  try {
+    const saved = Number(localStorage.getItem('dqc-pause') || 0);
+    if (saved > Date.now()) pauseUntil = saved;
+  } catch (err) { /* private mode */ }
+
+  function coolDown(waitMs) {
+    limits += 1;
+    const factor = limits > 1 ? Math.min(4, limits) : 1;
+    pauseUntil = Math.max(pauseUntil, Date.now() + waitMs * factor);
+    try { localStorage.setItem('dqc-pause', String(pauseUntil)); } catch (err) { /* private mode */ }
+  }
 
   function errorText(err) {
     if (!err) return 'unknown error';
@@ -119,10 +135,10 @@
         }
         if (err && err.status === 429) {
           const wait = Number(err.body && err.body.retry_after) || 5;
-          pauseUntil = Math.max(pauseUntil, Date.now() + wait * 1000 + 500);
+          coolDown(wait * 1000 + 500);
           traffic.queue.unshift(req);
-          log('rate limited: waiting ' + wait.toFixed(1) + 's', 'err');
-          await sleep(wait * 1000 + 500);
+          log('rate limited: waiting ' + wait.toFixed(1) + 's (strike ' + limits + ')', 'err');
+          await sleep(Math.max(0, pauseUntil - Date.now()));
         } else {
           req.reject(err);
         }
@@ -427,6 +443,7 @@
     const panel = mount();
     panel.querySelector('#dqc-start').disabled = true;
     panel.querySelector('#dqc-stop').disabled = false;
+    if (pauseUntil > Date.now()) log('cooldown from a previous paste: ' + Math.round((pauseUntil - Date.now()) / 60000) + ' min left', 'err');
     log('reading the client modules');
     const mods = modules();
     if (!mods.questStore || !mods.api) {
