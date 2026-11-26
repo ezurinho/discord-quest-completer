@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.3.0 — 2026-11-26
+
+Find the store even when every name changed.
+
+- `QuestStore` is now matched by `constructor.displayName` as well as by a prototype
+  method. Discord renames minified export keys between builds; the class name survives.
+  Orion matches its stores the same way.
+- The smoke suite runs twice, once with a prototype-shaped store and once with a
+  displayName-only store, so both discovery paths are executed.
+
 ## 3.2.0 — 2026-11-26
 
 The failure paths get a test too.

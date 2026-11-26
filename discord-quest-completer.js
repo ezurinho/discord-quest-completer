@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 3.2.0
+ * Discord Quest Completer 3.3.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '3.2.0';
+  const VERSION = '3.3.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -67,6 +67,15 @@
     });
     return hit ? hit.exports : null;
   }
+  // Minified keys change between builds; the class name survives. Orion matches
+  // stores by `constructor.displayName` for the same reason.
+  function byDisplayName(exports, name) {
+    if (!exports) return null;
+    return Object.keys(exports).map((key) => exports[key]).find((value) => {
+      try { return value && value.constructor && value.constructor.displayName === name; } catch (err) { return false; }
+    }) || null;
+  }
+
   function pick(exports, keys, protoMethod) {
     if (!exports) return null;
     for (const key of keys) {
@@ -77,12 +86,14 @@
   }
   function modules() {
     const stream = findModule((e) => pick(e, ['A', 'Z'], 'getStreamerActiveStreamMetadata'));
-    const quests = findModule((e) => pick(e, ['A', 'Z'], 'getQuest'));
+    // Either signal is enough: a prototype method, or the class name when the method
+  // was renamed along with the export key.
+  const quests = findModule((e) => pick(e, ['A', 'Z'], 'getQuest') || byDisplayName(e, 'QuestStore'));
     const dispatcher = findModule((e) => pick(e, ['h', 'Z'], 'flushWaitQueue'));
     const games = findModule((e) => (e && e.Ay && typeof e.Ay.getRunningGames === 'function') || (e && e.ZP && typeof e.ZP.getRunningGames === 'function'));
     const api = findModule((e) => (e && e.Bo && typeof e.Bo.get === 'function') || (e && e.tn && typeof e.tn.get === 'function'));
     return {
-      questStore: pick(quests, ['A', 'Z'], 'getQuest'),
+      questStore: pick(quests, ['A', 'Z'], 'getQuest') || byDisplayName(quests, 'QuestStore'),
       runStore: (games && games.Ay) || (games && games.ZP),
       dispatcher: pick(dispatcher, ['h', 'Z'], 'flushWaitQueue'),
       api: (api && api.Bo) || (api && api.tn),

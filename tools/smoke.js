@@ -79,8 +79,11 @@ const quests = new Map([
   }]
 ]);
 
-const questStore = Object.create(proto({ getQuest: (id) => quests.get(id) }));
-questStore.quests = quests;
+const useName = process.argv.indexOf('--name') >= 0;
+const questStore = useName
+  ? { constructor: { displayName: 'QuestStore' }, quests, getQuest: (id) => quests.get(id) }
+  : Object.create(proto({ getQuest: (id) => quests.get(id) }));
+if (!useName) questStore.quests = quests;
 const runStore = proto({ getRunningGames: () => [], getGameForPID: () => null });
 let limited = false;
 const api = {
@@ -214,6 +217,6 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
     console.error('log was: ' + (panel && panel.querySelector('[data-log]') ? panel.querySelector('[data-log]').textContent.slice(0, 400) : 'no log node'));
     process.exit(1);
   }
-  console.log('smoke: ok, ' + calls.length + ' requests, ' + video.length + ' video, ' + enrol.length + ' enrol, ' + claim.length + ' claim');
+  console.log('smoke (' + (useName ? 'displayName' : 'prototype') + '): ok, ' + calls.length + ' requests, ' + video.length + ' video, ' + enrol.length + ' enrol, ' + claim.length + ' claim');
   process.exit(0);
 })();
