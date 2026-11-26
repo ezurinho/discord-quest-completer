@@ -77,6 +77,11 @@ const quests = new Map([
     config: { messages: { questName: 'Gone quest' }, taskConfigV2: { tasks: { PLAY_ON_DESKTOP: { target: 15, applications: [{ id: '888' }] } } } },
     userStatus: {}
   }],
+  ['q-act', {
+    id: 'q-act',
+    config: { messages: { questName: 'Join the activity' }, taskConfigV2: { tasks: { PLAY_ACTIVITY: { target: 100, applications: [{ id: '777' }] } } } },
+    userStatus: { enrolledAt: '2026-01-01T00:00:00Z', progress: {} }
+  }],
   ['q-claim', {
     id: 'q-claim',
     config: { messages: { questName: 'Reward waiting' }, taskConfigV2: { tasks: { WATCH_VIDEO: { target: 30 } } } },
@@ -99,6 +104,10 @@ const runStore = proto({
   getRunningDiscordApplicationIds: () => new Set()
 });
 let limited = false;
+const userStore = Object.create(proto({ getCurrentUser: () => ({ id: 'u1' }) }));
+const chanStore = Object.create(proto({ getSortedPrivateChannels: () => [{ id: 'dm1' }] }));
+const guildChanStore = Object.create(proto({ getAllGuilds: () => ({}) }));
+
 const api = {
   // First video call is rate limited, enrolments 404: the two failure paths that
   // used to hang the run or spam the log.
@@ -112,6 +121,7 @@ const api = {
       err.body = { retry_after: 0.2 };
       throw err;
     }
+    if (url.indexOf('/heartbeat') >= 0) return { body: { progress: { PLAY_ACTIVITY: { value: 100 } } } };
     if (url.indexOf('q-404') >= 0) {
       const err = new Error('unknown quest');
       err.status = 404;
@@ -137,7 +147,10 @@ const req = { c: {
   1: { exports: { A: questStore } },
   2: { exports: { Ay: runStore } },
   3: { exports: { Bo: api } },
-  4: { exports: { h: proto({ flushWaitQueue: () => {}, dispatch: (payload) => events.push(payload) }) } }
+  4: { exports: { h: proto({ flushWaitQueue: () => {}, dispatch: (payload) => events.push(payload) }) } },
+  5: { exports: { A: userStore } },
+  6: { exports: { A: chanStore } },
+  7: { exports: { A: guildChanStore } }
 } };
 window.webpackChunkdiscord_app = {
   push: (arr) => { arr[2](req); return req; },
@@ -191,7 +204,7 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
   await new Promise((r) => setTimeout(r, 2600));
   const video = calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('/video-progress') >= 0);
   const enrol = calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('/enroll') >= 0);
-  if (video.length < 2) failures.push('the rate-limited video request was never retried');
+  if (video.length < 2) failures.push('the rate-limited video request was never retried; calls=' + JSON.stringify(calls.map((c) => String(c.url))));
   if (!enrol.length) failures.push('the unenrolled game quest was not enrolled');
   if (loggedNow().indexOf('rate limited') < 0) failures.push('nothing logged the 429');
   if (loggedNow().indexOf('cannot join') < 0) failures.push('the 404 on enrol was not reported');
@@ -202,6 +215,9 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
   const claim = calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('/claim-reward') >= 0);
   if (!claim.length) failures.push('the completed quest was never claimed');
   if (claim.length && claim[0].body && claim[0].body.traffic_metadata_sealed === undefined) failures.push('the claim body is missing the sealed blob');
+  const beats = calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('/heartbeat') >= 0);
+  if (!beats.length) failures.push('the activity quest never sent a heartbeat');
+  else if (beats[0].body && beats[0].body.stream_key !== 'call:dm1:u1') failures.push('the heartbeat carried the wrong stream key');
   const announced = events.find((e) => e.type === 'RUNNING_GAMES_CHANGE' && e.added && e.added.length);
   if (!announced) failures.push('no game was announced to the client');
   else {
@@ -212,7 +228,7 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
   await new Promise((r) => setTimeout(r, 200));
   const after = logBox ? logBox.textContent : '';
   if (after.indexOf('blocked until') < 0) failures.push('the diagnosis printed nothing about the block');
-  if (after.indexOf('4 quests') < 0) failures.push('the diagnosis miscounted the quests');
+  if (after.indexOf('5 quests') < 0) failures.push('the diagnosis miscounted the quests');
   if (stop && stop.handlers.click) stop.handlers.click[0]();
   const before = calls.length;
   await new Promise((r) => setTimeout(r, 800));

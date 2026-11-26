@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.5.0 — 2026-11-26
+
+`PLAY_ACTIVITY` quests can now be driven, and they are no longer misread as games.
+
+- Activity quests are credited by `POST /quests/<id>/heartbeat` with the call stream key,
+  not by anything in a store. The key is built the way the client builds it:
+  `call:<dm channel>:<user>` when you sit in a DM call, `guild:<guild>:<channel>:<user>`
+  when you are in a server voice channel, and nothing when you are in neither.
+- Because the key is 'no key, no heartbeat', an activity quest shows **NEEDS VOICE** and
+  stays unchecked instead of silently doing nothing.
+- Fixed a classification bug that would have made the feature useless: `PLAY_ACTIVITY`
+  contains the substring `PLAY`, so every activity quest was typed as `GAME` and got a
+  stand-in process instead of a heartbeat.
+- A beat that Discord never credits stops after four attempts with
+  `Discord is not accepting activity beats` instead of looping forever.
+- The smoke suite now carries an activity quest, a DM call and a user, and asserts the
+  heartbeat and its stream key.
+
 ## 3.4.0 — 2026-11-26
 
 Play quests were invisible to the client, and now they are not.

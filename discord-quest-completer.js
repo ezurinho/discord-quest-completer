@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 3.4.0
+ * Discord Quest Completer 3.5.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '3.4.0';
+  const VERSION = '3.5.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -24,7 +24,7 @@
     try { window.__dqcStop(); } catch (err) { /* the old copy is already gone */ }
   }
 
-  const state = { running: false, quests: [], lines: [], timers: new Map(), pulse: null, ui: null, video: null, cursor: 0, selected: new Set(), chosen: false };
+  const state = { key: null, running: false, quests: [], lines: [], timers: new Map(), pulse: null, ui: null, video: null, cursor: 0, selected: new Set(), chosen: false };
   // A quest that answers 404 will answer 404 on every retry: remember it instead of
   // burning the queue. A 429 pauses every video, not just the one that hit it.
   const blocked = new Set();
@@ -94,12 +94,18 @@
     const dispatcher = findModule((e) => pick(e, ['h', 'Z'], 'flushWaitQueue'));
     const games = findModule((e) => (e && e.Ay && typeof e.Ay.getRunningGames === 'function') || (e && e.ZP && typeof e.ZP.getRunningGames === 'function'));
     const api = findModule((e) => (e && e.Bo && typeof e.Bo.get === 'function') || (e && e.tn && typeof e.tn.get === 'function'));
+  const users = findModule((e) => pick(e, ['A', 'Z'], 'getCurrentUser'));
+  const chans = findModule((e) => pick(e, ['A', 'Z'], 'getSortedPrivateChannels'));
+  const guilds = findModule((e) => pick(e, ['A', 'Z'], 'getAllGuilds'));
     return {
       questStore: pick(quests, ['A', 'Z'], 'getQuest') || byDisplayName(quests, 'QuestStore'),
       runStore: (games && games.Ay) || (games && games.ZP),
       dispatcher: pick(dispatcher, ['h', 'Z'], 'flushWaitQueue'),
       api: (api && api.Bo) || (api && api.tn),
-      streamStore: pick(stream, ['A', 'Z'], 'getStreamerActiveStreamMetadata')
+      streamStore: pick(stream, ['A', 'Z'], 'getStreamerActiveStreamMetadata'),
+    userStore: pick(users, ['A', 'Z'], 'getCurrentUser'),
+    chanStore: pick(chans, ['A', 'Z'], 'getSortedPrivateChannels'),
+    guildChanStore: pick(guilds, ['A', 'Z'], 'getAllGuilds')
     };
   }
   function allQuests(mods) {
@@ -134,8 +140,11 @@
     // Video is the one path that still works reliably, so a quest that offers it is
     // driven as video even when it also lists a stream or a play task.
     const video = has('VIDEO') || has('WATCH');
-    const key = video || has('PLAY') || has('STREAM') || has('ACTIVITY') || keys[0];
-    const type = video ? 'VIDEO' : has('PLAY') ? 'GAME' : has('STREAM') ? 'STREAM' : has('ACTIVITY') ? 'ACTIVITY' : 'GAME';
+    // PLAY_ACTIVITY contains PLAY, and matching PLAY first classified every activity
+    // quest as a game: it was registered as a process and never sent a heartbeat.
+    const activity = has('ACTIVITY');
+    const key = video || activity || has('PLAY') || has('STREAM') || keys[0];
+    const type = video ? 'VIDEO' : activity ? 'ACTIVITY' : has('PLAY') ? 'GAME' : has('STREAM') ? 'STREAM' : 'GAME';
     const messages = (quest.config && quest.config.messages) || {};
     const app = (quest.config && quest.config.application) || {};
     // July 2026: the application id moved from config.application.id to
@@ -350,7 +359,11 @@
   // are validated by the game or the activity backend. Offering them a checkbox
   // would promise work the client cannot do.
   function isSupported(task) {
-    return Boolean(task) && (task.type === 'VIDEO' || task.type === 'GAME');
+    if (!task) return false;
+    if (task.type === 'VIDEO' || task.type === 'GAME') return true;
+    // An activity only progresses while the client can key a call, so it is offered
+    // only when that key can be built right now.
+    return task.type === 'ACTIVITY' && Boolean(state.key);
   }
 
   function cardFor(quest) {
@@ -361,7 +374,7 @@
     const value = task ? questValue(quest, task.key) : 0;
     const target = task ? task.target : 0;
     const pct = target ? Math.min(100, Math.round((value / target) * 100)) : done ? 100 : 0;
-    const label = blocked.has(quest.id) ? 'UNAVAILABLE' : !isSupported(task) && !done ? 'NOT AUTOMATABLE' : done ? 'DONE' : live ? 'RUNNING' : quest.userStatus && quest.userStatus.enrolledAt ? 'QUEUE' : 'NOT JOINED';
+    const label = blocked.has(quest.id) ? 'UNAVAILABLE' : task && task.type === 'ACTIVITY' && !state.key ? 'NEEDS VOICE' : !isSupported(task) && !done ? 'NOT AUTOMATABLE' : done ? 'DONE' : live ? 'RUNNING' : quest.userStatus && quest.userStatus.enrolledAt ? 'QUEUE' : 'NOT JOINED';
     const showEta = live || (state.running && !done && !blocked.has(quest.id) && Boolean(quest.userStatus && quest.userStatus.enrolledAt));
     const icon = task && task.type === 'VIDEO' ? ICON.video : task && (task.type === 'GAME' || task.type === 'ACTIVITY') ? ICON.game : ICON.clock;
     const card = document.createElement('div');
@@ -630,6 +643,60 @@
     store.__dqcPatched = true;
   }
 
+  // PLAY_ACTIVITY is credited by heartbeat, not by a store: the request needs the call
+  // stream key the client itself builds (`call:` for a DM, `guild:` for a channel).
+  function streamKey(mods) {
+    try {
+      const user = mods.userStore && mods.userStore.getCurrentUser && mods.userStore.getCurrentUser();
+      const ownerId = user && user.id;
+      if (!ownerId) return null;
+      const dm = mods.chanStore && mods.chanStore.getSortedPrivateChannels && mods.chanStore.getSortedPrivateChannels()[0];
+      if (dm && dm.id) return 'call:' + dm.id + ':' + ownerId;
+      const guilds = (mods.guildChanStore && mods.guildChanStore.getAllGuilds && mods.guildChanStore.getAllGuilds()) || {};
+      for (const id of Object.keys(guilds)) {
+        const vocal = guilds[id] && guilds[id].VOCAL && guilds[id].VOCAL[0];
+        const chan = vocal && vocal.channel;
+        if (chan && chan.id) return 'guild:' + (chan.guild_id || id) + ':' + chan.id + ':' + ownerId;
+      }
+    } catch (err) { /* a build without the voice stores */ }
+    return null;
+  }
+
+  const beating = new Set();
+
+  async function beat(mods, quest, task) {
+    if (beating.has(quest.id) || !state.running) return;
+    const key = streamKey(mods);
+    if (!key) { log(task.name + ': needs a voice channel to heartbeat', 'err'); return; }
+    beating.add(quest.id);
+    let idle = 0;
+    let last = questValue(quest, task.key);
+    try {
+      while (state.running && questValue(quest, task.key) < task.target) {
+        const res = await enqueue('/quests/' + quest.id + '/heartbeat', { stream_key: key, application_id: String(task.appId || ''), terminal: false });
+        const progress = (res && res.body && res.body.progress) || {};
+        const reported = progress[task.key] || progress.PLAY_ACTIVITY;
+        const value = Number(reported && reported.value);
+        if (Number.isFinite(value)) {
+          quest.userStatus = quest.userStatus || {};
+          quest.userStatus.progress = quest.userStatus.progress || {};
+          quest.userStatus.progress[task.key] = { value };
+        }
+        if (Number.isFinite(value) && value > last) { last = value; idle = 0; } else idle++;
+        if (idle >= 4) { log(task.name + ': Discord is not accepting activity beats', 'err'); break; }
+        if (Number.isFinite(value) && value >= task.target) break;
+        await sleep(15000);
+        state.quests = allQuests(mods);
+        quest = state.quests.find((q) => q.id === quest.id) || quest;
+      }
+      if (state.running) await enqueue('/quests/' + quest.id + '/heartbeat', { stream_key: key, application_id: String(task.appId || ''), terminal: true });
+    } catch (err) {
+      log('activity heartbeat failed: ' + errorText(err), 'err');
+    } finally {
+      beating.delete(quest.id);
+    }
+  }
+
   function pulseGame(mods, quest, task) {
     const game = fakeGame(task.appId);
     // Announcing an existing stand-in again is noise; a new one has to be announced so
@@ -668,6 +735,7 @@
     stalls.clear();
     traffic.post = mods.api.post.bind(mods.api);
     state.mods = mods;
+    state.key = streamKey(mods);
     patchRunStore(mods);
     state.quests = allQuests(mods);
     render();
@@ -684,7 +752,7 @@
       state.chosen = true;
       for (const quest of state.quests) {
         const task = taskOf(quest);
-        if (task && (task.type === 'VIDEO' || task.type === 'GAME')) state.selected.add(quest.id);
+        if (isSupported(task)) state.selected.add(quest.id);
       }
       render();
     }
@@ -706,7 +774,8 @@
       }
       // The stand-in is registered even when the enrolment is still in flight;
       // waiting for the next pulse delayed every play quest by up to a minute.
-      if (task.type !== 'VIDEO') pulseGame(mods, quest, task);
+      if (task.type === 'GAME' || task.type === 'STREAM') pulseGame(mods, quest, task);
+      if (task.type === 'ACTIVITY') beat(mods, quest, task).catch(() => {});
     }
     startVideos();
     state.pulse = setInterval(() => {
@@ -714,7 +783,10 @@
       const pending = state.quests.filter((q) => !(q.userStatus && q.userStatus.completedAt));
       for (const quest of pending) {
         const task = taskOf(quest);
-        if (task && task.type !== 'VIDEO' && !blocked.has(quest.id)) { fakeGame(task.appId); pulseGame(mods, quest, task); }
+        if (task && !blocked.has(quest.id)) {
+          if (task.type === 'ACTIVITY') beat(mods, quest, task).catch(() => {});
+          else if (task.type !== 'VIDEO') pulseGame(mods, quest, task);
+        }
         if (task) startVideos();
       }
       for (const quest of pending) {
@@ -731,6 +803,7 @@
 
   function stop() {
     state.running = false;
+    state.key = null;
     // Withdraw the stand-ins before restoring the store, so the client stops scheduling
     // heartbeats for a process that no longer exists.
     if (state.mods && standIns.size) dispatchGames(state.mods, [], Array.from(standIns.values()));

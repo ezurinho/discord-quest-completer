@@ -24,13 +24,15 @@ would double every progress request.
 | Task | How |
 |---|---|
 | `WATCH_VIDEO` | `POST /quests/<id>/video-progress` with fractional `timestamp`, every 7-9.5 s, one quest at a time |
-| `PLAY_ON_DESKTOP` | patches `RunningGameStore.getRunningGames` and `getGameForPID` with a stand-in process; Discord's own heartbeat does the rest |
+| `PLAY_ON_DESKTOP` | patches the six `RunningGameStore` views (`getRunningGames`, `getGameForPID`, `getVisibleGame`, `getVisibleRunningGames`, `getCandidateGames`, `getRunningDiscordApplicationIds`) with a stand-in, then dispatches `RUNNING_GAMES_CHANGE` with the `games` array; Discord's own heartbeat does the rest |
+| `PLAY_ACTIVITY` | `POST /quests/<id>/heartbeat` every 15 s with the call `stream_key` and `application_id`, then a final `terminal: true` beat. **Needs you to be in a voice channel or DM call** |
 | Enrol | `POST /quests/<id>/enroll` with the sealed attribution blob the client sends |
 | Claim | `POST /quests/<id>/claim-reward` for completed quests, once per session |
 
 `STREAM` and `ACHIEVEMENT` quests are labelled **NOT AUTOMATABLE**: a stream needs a
 real Go Live with another person in the channel, and achievements are validated by the
-game or the activity backend rather than the client.
+game rather than the client. Without a voice channel, `PLAY_ACTIVITY` shows **NEEDS
+VOICE** instead, because the heartbeat key is built from the call you are in.
 
 Modules are found by a prototype method (`getQuest`, `flushWaitQueue`, `getRunningGames`,
 `.post`) instead of by name, so a renamed export does not break the run.
