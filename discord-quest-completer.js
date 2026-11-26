@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 1.4.0
+ * Discord Quest Completer 1.5.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '1.4.0';
+  const VERSION = '1.5.0';
   const VIDEO_STEP = 5;
   const VIDEO_TICK = 900;
   // Pasted twice? The old panel goes, not a second one: two copies would double
@@ -107,6 +107,14 @@
       try {
         req.resolve(await traffic.post({ url: req.url, body: req.body }));
       } catch (err) {
+        const transient = err && (err.status === 500 || err.status === 502 || err.status === 503 || err.status === 504);
+        if (transient && !req.retried) {
+          req.retried = true;
+          traffic.queue.unshift(req);
+          log('server hiccup, retrying in 2s', 'err');
+          await sleep(2000);
+          continue;
+        }
         if (err && err.status === 429) {
           const wait = Number(err.body && err.body.retry_after) || 5;
           pauseUntil = Math.max(pauseUntil, Date.now() + wait * 1000 + 500);
@@ -212,6 +220,14 @@
     panel.querySelector('#dqc-start').addEventListener('click', () => run());
     panel.querySelector('#dqc-stop').addEventListener('click', () => stop());
     panel.querySelector('#dqc-hide').addEventListener('click', () => panel.remove());
+    try {
+      const saved = JSON.parse(localStorage.getItem('dqc-pos') || 'null');
+      if (saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)) {
+        panel.style.left = saved.left + 'px';
+        panel.style.top = saved.top + 'px';
+        panel.style.right = 'auto';
+      }
+    } catch (err) { /* a corrupt position is not worth a broken panel */ }
     drag(panel, panel.querySelector('[data-drag]'));
     return panel;
   }
@@ -231,10 +247,23 @@
       panel.style.top = (event.clientY - oy) + 'px';
       panel.style.right = 'auto';
     });
-    handle.addEventListener('pointerup', () => { moving = false; });
+    handle.addEventListener('pointerup', () => {
+      moving = false;
+      try { localStorage.setItem('dqc-pos', JSON.stringify({ left: panel.offsetLeft, top: panel.offsetTop })); } catch (err) { /* private mode */ }
+    });
   }
 
   // ---- work ------------------------------------------------------------
+  // 5 s of video per 900 ms: the only honest ETA is that ratio, not a guess.
+  const SPEED = (VIDEO_STEP * 1000) / VIDEO_TICK;
+  function etaText(value, target) {
+    const left = Math.max(0, target - value);
+    if (!left) return '';
+    const seconds = Math.ceil(left / SPEED);
+    if (seconds < 60) return '· ~' + seconds + 's left';
+    return '· ~' + Math.ceil(seconds / 60) + ' min left';
+  }
+
   function cardFor(quest) {
     const task = taskOf(quest);
     const done = Boolean(quest.userStatus && quest.userStatus.completedAt);
@@ -250,7 +279,7 @@
       '<div class="dqc-main"><div class="dqc-name"><span class="dqc-pill">' + label + '</span>' +
       esc(task ? task.name : quest.id) + '</div>' +
       '<div class="dqc-track"><div class="dqc-fill" style="width:' + pct + '%"></div></div>' +
-      '<div class="dqc-meta">' + (target ? value + ' / ' + target + ' s' + (pct ? ' · ' + pct + '%' : '') : 'waiting for a task config') + '</div></div>';
+      '<div class="dqc-meta">' + (target ? value + ' / ' + target + ' s' + (pct ? ' · ' + pct + '%' : '') + ((live || (state.running && !done && !blocked.has(quest.id) && pct < 100)) ? ' ' + etaText(value, target) : '') : 'waiting for a task config') + '</div></div>';
     return card;
   }
 
@@ -408,5 +437,6 @@
 
   mount();
   log(NAME + ' ' + VERSION + ' ready · press Start', 'ok');
+  state.ui.querySelector('#dqc-foot span:last-child').textContent = 'Ctrl+Shift+I to reopen';
   window.addEventListener('beforeunload', stop);
 })();

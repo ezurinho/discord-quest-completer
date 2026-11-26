@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.0 — 2026-11-26
+
+The panel tells you how long it will take, and survives a reload.
+
+- Each card shows an ETA (`~2 min left`) computed from the real 5 s-of-video-per-900 ms
+  ratio, not from a guess.
+- A 5xx or a 502 retries once after 2 s instead of dropping the quest.
+- The panel remembers where you dragged it (`localStorage`, per browser).
+
 ## 1.4.0 — 2026-11-26
 
 Stops hammering quests that cannot answer.

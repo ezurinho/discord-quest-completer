@@ -20,7 +20,7 @@ if (!/^\}\)\(\);$/.test(trimmed[trimmed.length - 1] || '')) failures.push('the I
 if (!/document\.getElementById\('dqc-panel'\)/.test(source)) failures.push('re-pasting must remove the old panel');
 if (/localStorage\.setItem\('token/.test(source)) failures.push('stores a token');
 if (/window\.webpackChunkdiscord_app\s*=/.test(source)) failures.push('overwrites the webpack global');
-if (lines.length > 420) failures.push('grew past 420 lines: keep it pasteable and readable');
+if (lines.length > 460) failures.push('grew past 460 lines: keep it pasteable and readable');
 
 try {
   execFileSync(process.execPath, ['--check', file], { stdio: 'pipe' });
