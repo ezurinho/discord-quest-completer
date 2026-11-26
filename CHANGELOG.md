@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.5.0 — 2026-11-26
+
+The July 2026 field move, and video first.
+
+- Discord moved the quest application id from `config.application.id` to
+  `config.taskConfigV2.tasks.<KEY>.applications[0].id`. Reading only the old path gave
+  `undefined`, so every play quest registered a stand-in with no app and nothing
+  advanced. Both paths are read now.
+- A quest offering `WATCH_VIDEO` is driven as video even when it also lists a stream or
+  a play task. Video is the path that still works; a broken play task was winning the
+  selection and parking the quest.
+- The pulse no longer re-registers stand-ins for quests already marked unavailable.
+
 ## 2.4.0 — 2026-11-26
 
 Progress stops going backwards.

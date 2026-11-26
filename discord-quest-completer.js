@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 2.4.0
+ * Discord Quest Completer 2.5.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '2.4.0';
+  const VERSION = '2.5.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -113,12 +113,21 @@
     const keys = taskKeysOf(tasks);
     if (!keys.length) return null;
     const has = (needle) => keys.find((key) => key.indexOf(needle) >= 0);
-    const key = has('PLAY') || has('STREAM') || has('VIDEO') || has('ACTIVITY') || has('WATCH') || keys[0];
-    const type = has('PLAY') ? 'GAME' : has('VIDEO') || has('WATCH') ? 'VIDEO' : has('STREAM') ? 'STREAM' : has('ACTIVITY') ? 'ACTIVITY' : 'GAME';
+    // Video is the one path that still works reliably, so a quest that offers it is
+    // driven as video even when it also lists a stream or a play task.
+    const video = has('VIDEO') || has('WATCH');
+    const key = video || has('PLAY') || has('STREAM') || has('ACTIVITY') || keys[0];
+    const type = video ? 'VIDEO' : has('PLAY') ? 'GAME' : has('STREAM') ? 'STREAM' : has('ACTIVITY') ? 'ACTIVITY' : 'GAME';
     const messages = (quest.config && quest.config.messages) || {};
     const app = (quest.config && quest.config.application) || {};
-    const name = messages.questName || app.name || quest.id;
-    return { key, name, type, target: Number(taskAt(tasks, key) && taskAt(tasks, key).target) || 0 };
+    // July 2026: the application id moved from config.application.id to
+    // taskConfigV2.tasks.<KEY>.applications[0].id. Reading only the old path returned
+    // undefined and every play quest silently did nothing.
+    const task = taskAt(tasks, key) || {};
+    const firstApp = (task.applications && task.applications[0]) || {};
+    const appId = firstApp.id || app.id || null;
+    const name = messages.questName || app.name || task.name || quest.id;
+    return { key, name, type, appId, target: Number(task.target) || 0 };
   }
   function questValue(quest, key) {
     const progress = quest.userStatus && quest.userStatus.progress;
@@ -555,7 +564,7 @@
         continue;
       }
       log(task.name + ' · ' + task.type + ' · ' + value + '/' + task.target);
-      if (task.type !== 'VIDEO') { fakeGame(quest.config && quest.config.application && quest.config.application.id); pulseGame(mods, quest, task); }
+      if (task.type !== 'VIDEO') { fakeGame(task.appId); pulseGame(mods, quest, task); }
     }
     startVideos();
     state.pulse = setInterval(() => {
@@ -563,7 +572,7 @@
       const pending = state.quests.filter((q) => !(q.userStatus && q.userStatus.completedAt));
       for (const quest of pending) {
         const task = taskOf(quest);
-        if (task && task.type !== 'VIDEO') pulseGame(mods, quest, task);
+        if (task && task.type !== 'VIDEO' && !blocked.has(quest.id)) { fakeGame(task.appId); pulseGame(mods, quest, task); }
         if (task) startVideos();
       }
       for (const quest of pending) {
