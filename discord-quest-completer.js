@@ -1,25 +1,27 @@
-// ==UserScript==
-// @name         Discord Quest Completer
-// @namespace    https://github.com/ezurinho/discord-quest-completer
-// @version      1.0.0
-// @description  Completes Discord Quests (watch video, play a game) from the web client, with a panel you can stop.
-// @author       ezurinho
-// @match        https://discord.com/*
-// @grant        none
-// @run-at       document-idle
-// @noframes
-// @updateURL    https://github.com/ezurinho/discord-quest-completer/releases/latest/download/discord-quest-completer.meta.js
-// @downloadURL  https://github.com/ezurinho/discord-quest-completer/releases/latest/download/discord-quest-completer.user.js
-// ==/UserScript==
+/*
+ * Discord Quest Completer 1.1.0
+ * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
+ * https://github.com/ezurinho/discord-quest-completer
+ *
+ * Chromium blocks pasting into the console until you type `allow pasting` and press Enter.
+ * If the Quest panel does not appear, the log line in the console says why.
+ *
+ * This automates your account against Discord's Terms of Service. That risk is yours.
+ */
 (() => {
   'use strict';
   // Discord gates the client behind webpack; every automation script has to borrow
   // the client's own dispatcher and HTTP client instead of guessing at endpoints.
   const NAME = 'Discord Quest Completer';
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const VIDEO_STEP = 5;
   const VIDEO_TICK = 900;
   const ENROLL_ON_START = true;
+
+  // Pasted twice? The old panel goes, not a second one: two script instances would
+  // drive the same quest and double every progress request.
+  const previous = document.getElementById('dqc-panel');
+  if (previous) previous.remove();
 
   const state = { running: false, quests: [], lines: [], videoTimers: new Map(), gameTimer: null, ui: null };
 
