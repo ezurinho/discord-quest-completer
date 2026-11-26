@@ -17,7 +17,7 @@ if (!/@match\s+https:\/\/discord\.com\/\*/.test(fs.readFileSync(user, 'utf8'))) 
 if (!/releases\/latest\/download\/discord-quest-completer\.user\.js/.test(fs.readFileSync(user, 'utf8'))) failures.push('downloadURL does not point at the latest release');
 
 const bundle = fs.readFileSync(user, 'utf8');
-const lines = bundle.split(/String.fromCharCode(10)/);
+const lines = bundle.split(String.fromCharCode(10));
 if (lines.length > 400) failures.push('userscript grew past 400 lines: keep it readable');
 const body = lines.filter((line) => line.trim());
 if (!/^\}\)\(\);$/.test(body[body.length - 1] || '')) failures.push('expected the IIFE to close as the last statement');
@@ -26,7 +26,7 @@ if (/localStorage\.setItem\('token/.test(bundle)) failures.push('reads or stores
 try {
   execFileSync(process.execPath, ['--check', user], { stdio: 'pipe' });
 } catch (err) {
-  failures.push('syntax: ' + String(err.stderr || err.message).split(/String.fromCharCode(10)/)[0]);
+  failures.push('syntax: ' + String(err.stderr || err.message).split(String.fromCharCode(10))[0]);
 }
 
 if (failures.length) {
