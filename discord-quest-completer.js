@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 1.7.0
+ * Discord Quest Completer 1.8.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '1.7.0';
+  const VERSION = '1.8.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -19,7 +19,7 @@
   const previous = document.getElementById('dqc-panel');
   if (previous) previous.remove();
 
-  const state = { running: false, quests: [], lines: [], timers: new Map(), pulse: null, ui: null };
+  const state = { running: false, quests: [], lines: [], timers: new Map(), pulse: null, ui: null, video: null, cursor: 0 };
   // A quest that answers 404 will answer 404 on every retry: remember it instead of
   // burning the queue. A 429 pauses every video, not just the one that hit it.
   const blocked = new Set();
@@ -301,7 +301,11 @@
     for (const quest of state.quests) list.appendChild(cardFor(quest));
     const done = state.quests.filter((q) => q.userStatus && q.userStatus.completedAt).length;
     const count = state.ui.querySelector('[data-count]');
-    if (count) count.textContent = done + ' / ' + state.quests.length + ' claimed';
+    if (count) {
+      const wait = Math.max(0, Math.round((pauseUntil - Date.now()) / 1000));
+      const mmss = Math.floor(wait / 60) + ':' + String(wait % 60).padStart(2, '0');
+      count.textContent = done + ' / ' + state.quests.length + ' claimed' + (wait ? ' · rate limited, ' + mmss + ' left' : '');
+    }
   }
 
   async function enroll(quest) {
@@ -351,15 +355,33 @@
     state.timers.delete(id);
   }
 
-  function startVideo(quest, task) {
-    if (state.timers.has(quest.id)) return;
+  // One cadence for the whole account, not one per quest: five parallel loops are
+  // five times the request rate against the same bucket, which is exactly what
+  // earns a 34-minute 429.
+  function nextVideoQuest() {
+    const waiting = state.quests.filter((quest) => {
+      if (quest.userStatus && quest.userStatus.completedAt) return false;
+      if (blocked.has(quest.id)) return false;
+      if (!quest.userStatus || !quest.userStatus.enrolledAt) return false;
+      const task = taskOf(quest);
+      return task && task.type === 'VIDEO' && questValue(quest, task.key) < task.target;
+    });
+    if (!waiting.length) return null;
+    return waiting[state.cursor++ % waiting.length];
+  }
+
+  function startVideos() {
+    if (state.video) return;
     const loop = async () => {
-      await videoTick(quest, task);
-      if (!state.timers.has(quest.id)) return;
-      const wait = VIDEO_MIN_MS + Math.random() * (VIDEO_MAX_MS - VIDEO_MIN_MS);
-      state.timers.set(quest.id, setTimeout(loop, wait));
+      if (!state.running) return;
+      if (Date.now() >= pauseUntil) {
+        const quest = nextVideoQuest();
+        if (quest) await videoTick(quest, taskOf(quest));
+      }
+      render();
+      if (state.running) state.video = setTimeout(loop, VIDEO_MIN_MS + Math.random() * (VIDEO_MAX_MS - VIDEO_MIN_MS));
     };
-    state.timers.set(quest.id, setTimeout(loop, 400));
+    state.video = setTimeout(loop, 500);
   }
 
   // The client believes a game is running when the store says so and the running
@@ -432,16 +454,16 @@
         log('not joined: ' + task.name, 'err');
         continue;
       }
-      if (task.type === 'VIDEO') startVideo(quest, task);
-      else { fakeGame(quest.config && quest.config.application && quest.config.application.id); pulseGame(mods, quest, task); }
+      if (task.type !== 'VIDEO') { fakeGame(quest.config && quest.config.application && quest.config.application.id); pulseGame(mods, quest, task); }
     }
+    startVideos();
     state.pulse = setInterval(() => {
       state.quests = allQuests(mods);
       const pending = state.quests.filter((q) => !(q.userStatus && q.userStatus.completedAt));
       for (const quest of pending) {
         const task = taskOf(quest);
         if (task && task.type !== 'VIDEO') pulseGame(mods, quest, task);
-        if (task && task.type === 'VIDEO' && !state.timers.has(quest.id)) startVideo(quest, task);
+        if (task && task.type === 'VIDEO') startVideos();
       }
       render();
       if (!pending.length) stop();
@@ -451,6 +473,8 @@
 
   function stop() {
     state.running = false;
+    if (state.video) clearTimeout(state.video);
+    state.video = null;
     for (const id of Array.from(state.timers.keys())) stopVideo(id);
     if (state.pulse) clearInterval(state.pulse);
     state.pulse = null;

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.8.0 — 2026-11-26
+
+One cadence for the account, and the cooldown is visible.
+
+- The video loop used to run per quest: four quests meant four loops against the same
+  rate-limit bucket. There is now a single loop that advances one quest at a time,
+  round-robin, every 7-9.5 s. That is what earns the 429s in the screenshots.
+- While limited, the footer counts it down (`rate limited, 33:48 left`) instead of the
+  panel looking frozen.
+- The selected quest is re-read from the store on every turn, so a finished video stops
+  immediately instead of waiting for the next 60 s pulse.
+
 ## 1.7.0 — 2026-11-26
 
 Video progress at the speed a player actually posts it.
