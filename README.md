@@ -32,6 +32,10 @@ and no second copy.
 | Enrol | `POST /quests/<id>/enroll` with the sealed attribution blob the client sends |
 | Claim | `POST /quests/<id>/claim-reward` for completed quests, once per session |
 
+A quest whose `startsAt` is still in the future shows **SOON**, is never enrolled, and
+cannot be ticked. An account with quest access suspended is not started at all: the footer
+says so, and the `?` diagnosis prints the date.
+
 `STREAM` and `ACHIEVEMENT` quests are labelled **NOT AUTOMATABLE**: a stream needs a
 real Go Live with another person in the channel, and achievements are validated by the
 game rather than the client. Without a voice channel, `PLAY_ACTIVITY` shows **NEEDS
@@ -69,6 +73,41 @@ Read it in this order:
 
 Rate limits: a 429 pauses every request for the `retry_after` window and the cooldown
 is saved, so reloading during one does not restart the punishment.
+
+Claims: a claim is attempted twice, then the card grows a **CLAIM** pill. Pressing it is
+the only thing that retries, because the usual reason a claim fails is a captcha and a
+timer against a captcha is just traffic.
+
+## How it compares
+
+Read from each project's own README in November 2026, not from a description of it.
+
+| Tool | Shape | Quests it finishes | How | Your token |
+|---|---|---|---|---|
+| **this one** | console script, one file | video, play-on-desktop, activity | patches `RunningGameStore` and posts through the client's own HTTP module | never touched |
+| Orion (nyxxbit) | userscript or Vencord plugin | the same three, plus achievement-in-activity through an OAuth flow against `discordsays.com` | store spoof and heartbeats | never touched; the OAuth grant is created and revoked |
+| markterence | native Windows app | play-on-desktop only | creates dummy executables Discord detects as a running game | not involved |
+| xgg-2/discord-quests | Node library | video, play, stream, activity | talks to the HTTP API directly, one token per instance | **required** |
+| r3aper007 | Python self-bot | video, play, activity | reversed endpoints, token from argv or a file | **required** |
+
+Two things follow from that table. Anything that asks for your token can be run from
+anywhere, including a server, which is also why those tools carry request fingerprints and
+proxy support: they are the ones that look like a bot. This script and Orion run inside your
+own logged-in client, so the requests are already yours — the cost is that the app has to
+stay open.
+
+Where this one is deliberately behind Orion: `ACHIEVEMENT_IN_ACTIVITY`. Orion completes it
+by authorizing the quest's application on your account and posting forged progress to the
+activity backend. That is the loudest thing in any of these tools, it is the behaviour
+Discord's quest enforcement is aimed at, and it is off by default there too. It is not here.
+`STREAM` is not here either: Discord checks that you are really live with another person in
+the channel before it opens a heartbeat, and a fake metadata object does not satisfy that.
+
+Where it is ahead: one cadence for the whole account instead of a loop per quest, the
+sealed attribution blob on enrol and claim, map-shaped and versioned task configs, a
+progress ceiling tied to the wall clock, the suspension and start-date states above, and a
+smoke suite that runs the real bundle against a stub client — including a suspended account
+that must send nothing.
 
 ## Limits worth knowing
 

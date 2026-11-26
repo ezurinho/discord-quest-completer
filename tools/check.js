@@ -33,12 +33,15 @@ const invariants = [
   ['a blocked enrolment is not retried', 'enrollClosed'],
   ['an expired quest is dropped', 'isExpired'],
   ['a selection is honoured mid-run', 'state.selected.has(quest.id)'],
-  ['the stand-in fills unknown string fields', 'new Proxy(game']
+  ['the stand-in fills unknown string fields', 'new Proxy(game'],
+  ['a quest access suspension stops the run', 'questAccessSuspendedUntil'],
+  ['a quest that has not started is left alone', 'startsAt'],
+  ['a failed claim is manual, not a loop', 'claimFailed']
 ];
 for (const [name, needle] of invariants) {
   if (source.indexOf(needle) < 0) failures.push('regression: ' + name);
 }
-if (lines.length > 980) failures.push('grew past 980 lines: keep it pasteable and readable');
+if (lines.length > 1200) failures.push('grew past 1200 lines: keep it pasteable and readable');
 
 try {
   execFileSync(process.execPath, ['--check', file], { stdio: 'pipe' });

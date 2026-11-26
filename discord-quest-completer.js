@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 3.6.1
+ * Discord Quest Completer 4.0.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '3.6.1';
+  const VERSION = '4.0.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -132,6 +132,36 @@
     const at = raw ? new Date(raw).getTime() : 0;
     return Number.isFinite(at) && at > 0 && at < Date.now();
   }
+  // A quest that has not started yet answers 404 on enrol and reads as "cannot join". The
+  // client itself refuses to start one, so it is listed as SOON and left alone.
+  function startsAt(quest) {
+    const config = (quest && quest.config) || {};
+    const raw = config.startsAt || config.starts_at || null;
+    const at = raw ? new Date(raw).getTime() : 0;
+    return Number.isFinite(at) && at > Date.now() ? at : 0;
+  }
+
+  // Orbs are what most of these quests pay, and the sum is the only number worth putting
+  // on a card next to the progress.
+  function orbsOf(quest) {
+    const config = (quest && quest.config) || {};
+    const rewards = config.rewards;
+    const list = Array.isArray(rewards) ? rewards : (rewards && rewards.rewards) || [];
+    return list.reduce((sum, reward) => sum + (Number(reward && (reward.orbQuantity || reward.orb_quantity)) || 0), 0);
+  }
+
+  // Discord returns this beside questEnrollmentBlockedUntil and its own client refuses to
+  // start anything while it is set. Enrolment being blocked stops new quests; access being
+  // suspended stops every task type, video included. Reading only the first hammered a
+  // suspended account with heartbeats it had already been told to stop sending.
+  function suspendedUntil(store) {
+    if (!store) return null;
+    const raw = store.questAccessSuspendedUntil;
+    const at = raw ? new Date(raw).getTime() : 0;
+    if (Number.isFinite(at) && at > Date.now()) return new Date(at);
+    return store.isQuestAccessSuspended === true ? new Date(0) : null;
+  }
+
   function allQuests(mods) {
     const raw = mods.questStore && mods.questStore.quests;
     if (!raw) return [];
@@ -268,6 +298,8 @@
     '.dqc-track{height:5px;border-radius:99px;background:rgba(255,255,255,.08);margin-top:6px;overflow:hidden}',
     '.dqc-fill{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#6d4bff,#3ea8ff);transition:width .45s ease}',
     '.dqc-card.done .dqc-fill{background:linear-gradient(90deg,#2dbe78,#7fe4b3)}',
+    '.dqc-claim{cursor:pointer;background:rgba(255,170,60,.26)!important;color:#ffd08a!important}',
+    '.dqc-claim:hover{background:rgba(255,170,60,.4)!important}',
     '.dqc-meta{font-size:10px;color:#8b93a3;margin-top:4px;letter-spacing:.2px}',
     '#dqc-log{margin:2px 4px 0;padding:9px 10px;max-height:124px;overflow:auto;border-radius:10px;background:rgba(0,0,0,.34);border:1px solid rgba(255,255,255,.05);font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;color:#8f97a6;white-space:pre-wrap}',
     '#dqc-log .ok{color:#7fe4b3}',
@@ -340,6 +372,12 @@
         panel.style.right = 'auto';
       }
     } catch (err) { /* a corrupt position is not worth a broken panel */ }
+    panel.querySelector('[data-list]').addEventListener('click', (event) => {
+      const hit = event.target && event.target.closest && event.target.closest('.dqc-claim');
+      if (!hit) return;
+      const quest = state.quests.find((q) => q.id === hit.dataset.id);
+      if (quest) claim(quest, true);
+    });
     panel.querySelector('[data-list]').addEventListener('change', (event) => {
       const box = event.target;
       if (!box || !box.classList || !box.classList.contains('dqc-pick')) return;
@@ -407,8 +445,9 @@
   // Streams need a real Go Live plus someone else in the channel, and achievements
   // are validated by the game or the activity backend. Offering them a checkbox
   // would promise work the client cannot do.
-  function isSupported(task) {
+  function isSupported(task, quest) {
     if (!task) return false;
+    if (quest && startsAt(quest)) return false;
     // A game without an application id has nothing to be: the stand-in would announce a
     // process Discord cannot match to the quest, and it would sit at 0 % either way.
     if (task.type === 'GAME') return Boolean(task.appId);
@@ -418,26 +457,50 @@
     return task.type === 'ACTIVITY' && Boolean(state.key);
   }
 
+  // Active first by progress, then the ones this script cannot drive, then the finished.
+  function orderKey(quest) {
+    if (quest.userStatus && quest.userStatus.completedAt) return 3;
+    const task = taskOf(quest);
+    if (!task || blocked.has(quest.id) || !isSupported(task, quest)) return 2;
+    return 1;
+  }
+
+  function pctOf(quest) {
+    const task = taskOf(quest);
+    if (!task || !task.target) return 0;
+    return Math.min(100, (questValue(quest, task.key) / task.target) * 100);
+  }
+
   function cardFor(quest) {
     const task = taskOf(quest);
     const done = Boolean(quest.userStatus && quest.userStatus.completedAt);
     const live = state.running && !done && task && task.type === 'VIDEO' && state.selected.has(quest.id);
-    const supported = isSupported(task);
+    const supported = isSupported(task, quest);
+    const later = startsAt(quest) > 0;
     const value = task ? questValue(quest, task.key) : 0;
     const target = task ? task.target : 0;
     const pct = target ? Math.min(100, Math.round((value / target) * 100)) : done ? 100 : 0;
-    const label = blocked.has(quest.id) ? 'UNAVAILABLE' : task && task.type === 'ACTIVITY' && !state.key ? 'NEEDS VOICE' : !isSupported(task) && !done ? 'NOT AUTOMATABLE' : done ? 'DONE' : live ? 'RUNNING' : quest.userStatus && quest.userStatus.enrolledAt ? 'QUEUE' : 'NOT JOINED';
+    const label = claimFailed.has(quest.id) ? 'CLAIM'
+      : blocked.has(quest.id) ? 'UNAVAILABLE'
+        : later ? 'SOON'
+          : task && task.type === 'ACTIVITY' && !state.key ? 'NEEDS VOICE'
+            : !supported && !done ? 'NOT AUTOMATABLE'
+              : done ? 'DONE' : live ? 'RUNNING' : quest.userStatus && quest.userStatus.enrolledAt ? 'QUEUE' : 'NOT JOINED';
     const showEta = live || (state.running && !done && !blocked.has(quest.id) && Boolean(quest.userStatus && quest.userStatus.enrolledAt));
     const icon = task && task.type === 'VIDEO' ? ICON.video : task && (task.type === 'GAME' || task.type === 'ACTIVITY') ? ICON.game : ICON.clock;
+    const orbs = orbsOf(quest);
     const card = document.createElement('div');
     card.className = 'dqc-card' + (done ? ' done' : live ? ' live' : '');
+    const pill = claimFailed.has(quest.id)
+      ? '<span class="dqc-pill dqc-claim" data-id="' + quest.id + '" title="Claim the reward again">CLAIM</span>'
+      : '<span class="dqc-pill">' + label + '</span>';
     card.innerHTML = '<input type="checkbox" class="dqc-pick" data-id="' + quest.id + '"' +
       (supported ? '' : ' disabled') + (state.selected.has(quest.id) ? ' checked' : '') + '>' +
       '<div class="dqc-icon">' + icon + '</div>' +
-      '<div class="dqc-main"><div class="dqc-name"><span class="dqc-pill">' + label + '</span>' +
+      '<div class="dqc-main"><div class="dqc-name">' + pill +
       esc(task ? task.name : quest.id) + '</div>' +
       '<div class="dqc-track"><div class="dqc-fill" style="width:' + pct + '%"></div></div>' +
-      '<div class="dqc-meta">' + (target ? value + ' / ' + target + ' s' + (pct ? ' · ' + pct + '%' : '') + (showEta && pct < 100 ? ' ' + etaText(value, target) : '') : 'waiting for a task config') + '</div></div>';
+      '<div class="dqc-meta">' + (target ? value + ' / ' + target + ' s' + (pct ? ' · ' + pct + '%' : '') + (showEta && pct < 100 ? ' ' + etaText(value, target) : '') : 'waiting for a task config') + (orbs ? ' · ' + orbs + ' Orbs' : '') + '</div></div>';
     return card;
   }
 
@@ -454,6 +517,8 @@
         quest.userStatus && quest.userStatus.completedAt ? 1 : 0,
         blocked.has(quest.id) ? 1 : 0,
         state.selected.has(quest.id) ? 1 : 0,
+        claimFailed.has(quest.id) ? 1 : 0,
+        startsAt(quest) ? 1 : 0,
         state.running ? 1 : 0,
         state.key ? 1 : 0
       ].join('|');
@@ -464,14 +529,20 @@
     const count = state.ui && state.ui.querySelector('[data-count]');
     if (!count) return;
     const done = state.quests.filter((q) => q.userStatus && q.userStatus.completedAt).length;
+    const orbs = state.quests.reduce((sum, quest) => sum + orbsOf(quest), 0);
     const wait = Math.max(0, Math.round((pauseUntil - Date.now()) / 1000));
     const mmss = Math.floor(wait / 60) + ':' + String(wait % 60).padStart(2, '0');
-    count.textContent = done + ' / ' + state.quests.length + ' claimed' + (wait ? ' · rate limited, ' + mmss + ' left' : '');
+    const suspended = suspendedUntil(state.mods && state.mods.questStore);
+    count.textContent = done + ' / ' + state.quests.length + ' claimed'
+      + (orbs ? ' · ' + orbs + ' Orbs' : '')
+      + (wait ? ' · rate limited, ' + mmss + ' left' : '')
+      + (suspended ? ' · QUEST ACCESS SUSPENDED' : '');
   }
 
   function render() {
     const list = state.ui && state.ui.querySelector('[data-list]');
     if (!list) return;
+    state.quests = state.quests.slice().sort((a, b) => (orderKey(a) - orderKey(b)) || (pctOf(b) - pctOf(a)));
     const sig = signature();
     if (sig !== state.sig) {
       state.sig = sig;
@@ -562,6 +633,11 @@
   }
 
   const claimed = new Set();
+  // A claim that keeps failing is not retried on a timer: a captcha does not clear on its
+  // own, and a loop of POSTs against it is exactly the traffic that gets an account looked
+  // at. The card keeps a CLAIM pill and the user decides.
+  const claimFailed = new Set();
+  const claimBusy = new Set();
 
   // Answers the only question worth asking when a panel looks idle: what does the
   // client actually hold for these quests?
@@ -571,6 +647,8 @@
     const store = mods.questStore;
     log('diagnose: ' + Object.keys(store).filter((k) => k.indexOf('quest') >= 0).join(', '));
     log('diagnose: blocked until ' + (store.questEnrollmentBlockedUntil || 'never'));
+    const suspended = suspendedUntil(store);
+    log('diagnose: access ' + (suspended ? (suspended.getTime() === 0 ? 'SUSPENDED' : 'suspended until ' + suspended.toLocaleString()) : 'clear'));
     const list = allQuests(mods);
     const counts = { video: 0, game: 0, other: 0, joined: 0, done: 0 };
     for (const quest of list) {
@@ -581,31 +659,49 @@
       if (quest.userStatus && quest.userStatus.completedAt) counts.done += 1;
     }
     log('diagnose: ' + list.length + ' quests · ' + counts.video + ' video · ' + counts.game + ' game · ' + counts.other + ' other · ' + counts.joined + ' joined · ' + counts.done + ' done');
+    const soon = list.filter((q) => startsAt(q)).length;
+    if (soon) log('diagnose: ' + soon + ' quest(s) have not started yet');
     const sample = list.find((q) => { const t = taskOf(q); return t && t.type === 'VIDEO'; });
     if (sample) {
       const task = taskOf(sample);
-      log('diagnose: ' + task.name + ' · keys ' + taskKeysOf(configOf(sample).tasks).join('|') + ' · app ' + (task.appId || 'none'));
+      log('diagnose: ' + task.name + ' · keys ' + taskKeysOf(configOf(sample).tasks).join('|') + ' · app ' + (task.appId || 'none') + ' · ' + orbsOf(sample) + ' orbs');
     }
   }
 
   const stalls = new Map();
 
-  async function claim(quest) {
+  async function claim(quest, manual) {
+    if (!quest || claimBusy.has(quest.id)) return;
+    claimBusy.add(quest.id);
+    const name = taskOf(quest) ? taskOf(quest).name : quest.id;
     try {
       await enqueue('/quests/' + quest.id + '/claim-reward', enrollBody(quest));
-      log('claimed ' + (taskOf(quest) ? taskOf(quest).name : quest.id), 'ok');
+      claimed.add(quest.id);
+      claimFailed.delete(quest.id);
+      log('claimed ' + name, 'ok');
     } catch (err) {
-      // One retry: a claim that lost a race with the completion heartbeat is worth
-      // another try, a 404 is not.
+      // One retry: a claim that lost a race with the completion heartbeat is worth another
+      // try, a 404 is not.
+      let done = false;
       if (err && err.status !== 404) {
         try {
           await sleep(3000);
           await enqueue('/quests/' + quest.id + '/claim-reward', enrollBody(quest));
-          log('claimed ' + (taskOf(quest) ? taskOf(quest).name : quest.id) + ' (second try)', 'ok');
-          return;
-        } catch (again) { /* fall through to the report */ }
+          done = true;
+        } catch (again) { /* the second refusal is the answer */ }
       }
-      log('claim failed: ' + errorText(err), 'err');
+      if (done) {
+        claimed.add(quest.id);
+        claimFailed.delete(quest.id);
+        log('claimed ' + name + ' (second try)', 'ok');
+      } else {
+        claimFailed.add(quest.id);
+        log('claim failed' + (manual ? ' again' : '') + ' for ' + name + ': ' + errorText(err) + ' · press CLAIM on the card', 'err');
+      }
+    } finally {
+      claimBusy.delete(quest.id);
+      state.sig = '';
+      render();
     }
   }
 
@@ -837,6 +933,15 @@
       stop();
       return;
     }
+    // Suspended access is the harsher of the two states and it locks every task type. The
+    // client refuses to start a quest in it; sending heartbeats anyway is the loudest
+    // thing this script could do with an account Discord already flagged.
+    const suspended = suspendedUntil(mods.questStore);
+    if (suspended) {
+      log('Discord suspended quest access ' + (suspended.getTime() === 0 ? 'on this account' : 'until ' + suspended.toLocaleString()) + ' · not starting', 'err');
+      stop();
+      return;
+    }
     state.running = true;
     sent.clear();
     stalls.clear();
@@ -868,7 +973,7 @@
     }
     for (const quest of state.quests) {
       if (quest.userStatus && quest.userStatus.completedAt) {
-        if (!quest.userStatus.claimedAt) claim(quest).catch(() => {});
+        if (!quest.userStatus.claimedAt && !claimed.has(quest.id) && !claimFailed.has(quest.id)) claim(quest).catch(() => {});
         continue;
       }
       const task = taskOf(quest);
@@ -900,7 +1005,7 @@
         if (task) startVideos();
       }
       for (const quest of pending) {
-        if (quest.userStatus && quest.userStatus.completedAt && !quest.userStatus.claimedAt && !claimed.has(quest.id)) {
+        if (quest.userStatus && quest.userStatus.completedAt && !quest.userStatus.claimedAt && !claimed.has(quest.id) && !claimFailed.has(quest.id)) {
           claimed.add(quest.id);
           claim(quest).catch(() => {});
         }

@@ -84,16 +84,24 @@ const quests = new Map([
   }],
   ['q-claim', {
     id: 'q-claim',
-    config: { messages: { questName: 'Reward waiting' }, taskConfigV2: { tasks: { WATCH_VIDEO: { target: 30 } } } },
+    config: {
+      messages: { questName: 'Reward waiting' },
+      rewards: { assignment_method: 0, rewards: [{ orbQuantity: 700 }] },
+      taskConfigV2: { tasks: { WATCH_VIDEO: { target: 30 } } }
+    },
     userStatus: { enrolledAt: '2026-01-01T00:00:00Z', completedAt: '2026-01-02T00:00:00Z', progress: { WATCH_VIDEO: { value: 30 } } }
   }]
 ]);
 
 const useName = process.argv.indexOf('--name') >= 0;
+const suspendedMode = process.argv.indexOf('--suspended') >= 0;
 const questStore = useName
   ? { constructor: { displayName: 'QuestStore' }, quests, getQuest: (id) => quests.get(id) }
   : Object.create(proto({ getQuest: (id) => quests.get(id) }));
 if (!useName) questStore.quests = quests;
+// The harsher of Discord's two states: enrolment blocked stops new quests, access
+// suspended stops every task type. The run must not send a single request.
+if (suspendedMode) questStore.isQuestAccessSuspended = true;
 const events = [];
 const runStore = proto({
   getRunningGames: () => [],
@@ -200,6 +208,20 @@ if (!diag || !diag.handlers.click || !diag.handlers.click.length) failures.push(
 if (!start || !start.handlers.click || !start.handlers.click.length) failures.push('Start has no click handler');
 
 (async () => {
+  if (suspendedMode) {
+    if (start && start.handlers.click) start.handlers.click[0]();
+    await new Promise((r) => setTimeout(r, 700));
+    const logged = loggedNow();
+    if (calls.length) failures.push('a suspended account still sent ' + calls.length + ' request(s)');
+    if (logged.indexOf('suspended quest access') < 0) failures.push('the suspension was not reported');
+    if (failures.length) {
+      console.error('smoke (suspended): ' + failures.join('; '));
+      console.error('log was: ' + logged.slice(0, 300));
+      process.exit(1);
+    }
+    console.log('smoke (suspended): ok, 0 requests, run refused');
+    process.exit(0);
+  }
   if (start && start.handlers.click) start.handlers.click[0]();
   // Every request goes through the client queue with a 250-500 ms gap, so the first
   // video tick can sit behind four other calls: wait for the queue, not for a round number.
@@ -211,6 +233,9 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
   if (loggedNow().indexOf('rate limited') < 0) failures.push('nothing logged the 429');
   if (loggedNow().indexOf('cannot join') < 0) failures.push('the 404 on enrol was not reported');
   if (video.length && !(video[0].body && typeof video[0].body.timestamp === 'number')) failures.push('the video body has no numeric timestamp');
+  const listNode = panel && panel.querySelector('[data-list]');
+  const cards = listNode && listNode.children ? listNode.children.map((card) => card.html || '').join('') : '';
+  if (cards.indexOf('700 Orbs') < 0) failures.push('the orb reward is not on the card');
   const logBox = panel && panel.querySelector('[data-log]');
   const logged = logBox ? logBox.textContent : '';
   if (logged.indexOf('quests on this account') < 0) failures.push('the run never logged the quest count');

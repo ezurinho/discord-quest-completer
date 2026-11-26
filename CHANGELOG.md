@@ -1,5 +1,36 @@
 # Changelog
 
+## 4.0.0 — 2026-11-26
+
+The pass that came out of reading every other tool's source and Discord's own quest
+documentation. Nothing here is a rewrite; every item is a state the client already tracks
+and this script was ignoring.
+
+- **Quest access suspension is read and obeyed.** `questAccessSuspendedUntil` and
+  `isQuestAccessSuspended` arrive beside `questEnrollmentBlockedUntil` on the quest store,
+  and Discord's own client refuses to start any quest while they are set. This one locks
+  every task type, video included. The run now stops with the date instead of heartbeating
+  into a locked surface, and the footer says `QUEST ACCESS SUSPENDED` while it lasts.
+- **Quests that have not started are left alone.** `config.startsAt` / `starts_at` is read;
+  an unstarted quest shows **SOON**, its checkbox is disabled, and it is never enrolled.
+  Before, every one of them answered 404 and landed on the block list.
+- **The reward is on the card.** Orbs are summed from `config.rewards.rewards[].orbQuantity`
+  and printed next to the progress, with the account total in the footer, so the run has a
+  score instead of a pile of percentages.
+- **The list is ordered by what matters.** Active quests first, highest progress at the top,
+  then the ones this client cannot drive, then the finished ones. Twenty quests in fetch
+  order was a wall of noise.
+- **A failed claim is manual, not a loop.** Claiming is often gated by a captcha that no
+  amount of retrying clears. Two attempts, then a **CLAIM** pill on the card that retries
+  exactly once per press, and the auto-claim pass skips a quest that already failed so it is
+  not re-POSTed every minute.
+- `isSupported` now takes the quest as well as the task, so "not automatable" means the
+  quest, not only its type.
+- The diagnosis prints the access state and how many quests have not started, and the video
+  sample line carries the orb value.
+- The smoke suite runs a third time against a suspended store and asserts that the run
+  sends zero requests; the orb line is asserted on the rendered card.
+
 ## 3.6.1 — 2026-11-26
 
 The panel worked and the console filled with the client's own crash.
