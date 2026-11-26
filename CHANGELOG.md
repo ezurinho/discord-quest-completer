@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.0.1 — 2026-11-26
+
+The new smoke case found a real one on its first run.
+
+- **A quest that has not started was still being enrolled.** `isSupported` learned about
+  `startsAt` in 4.0.0 and the card reflected it, but the selection pass and the drive loop
+  still called it with the task alone, so the run picked the quest, asked to join, and put a
+  future quest on the block list with the 404 it earned. Both call sites pass the quest now,
+  and `enroll` refuses anything this client cannot drive.
+- The smoke suite covers the two states that were only asserted by the checker: a quest with a
+  future `startsAt` must render **SOON**, keep its box disabled and send no request naming it,
+  and a claim refused on both attempts must leave a **CLAIM** pill and never retry on its own —
+  asserted again after a Stop/Start, which is where a timer would have shown up.
+
 ## 4.0.0 — 2026-11-26
 
 The pass that came out of reading every other tool's source and Discord's own quest

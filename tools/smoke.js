@@ -90,6 +90,22 @@ const quests = new Map([
       taskConfigV2: { tasks: { WATCH_VIDEO: { target: 30 } } }
     },
     userStatus: { enrolledAt: '2026-01-01T00:00:00Z', completedAt: '2026-01-02T00:00:00Z', progress: { WATCH_VIDEO: { value: 30 } } }
+  }],
+  // Starts in the future: the card says SOON, the box is dead, no request may name it.
+  ['q-soon', {
+    id: 'q-soon',
+    config: {
+      messages: { questName: 'Starts tomorrow' },
+      startsAt: new Date(Date.now() + 86400000).toISOString(),
+      taskConfigV2: { tasks: { WATCH_VIDEO: { target: 60 } } }
+    },
+    userStatus: {}
+  }],
+  // Completed, unclaimed, and the claim is refused on every attempt (a captcha).
+  ['q-claimfail', {
+    id: 'q-claimfail',
+    config: { messages: { questName: 'Captcha quest' }, taskConfigV2: { tasks: { WATCH_VIDEO: { target: 30 } } } },
+    userStatus: { enrolledAt: '2026-01-01T00:00:00Z', completedAt: '2026-01-02T00:00:00Z', progress: { WATCH_VIDEO: { value: 30 } } }
   }]
 ]);
 
@@ -130,6 +146,12 @@ const api = {
       throw err;
     }
     if (url.indexOf('/heartbeat') >= 0) return { body: { progress: { PLAY_ACTIVITY: { value: 100 } } } };
+    if (url.indexOf('q-claimfail') >= 0) {
+      const err = new Error('captcha required');
+      err.status = 403;
+      err.body = { message: 'Captcha required', code: 40001 };
+      throw err;
+    }
     if (url.indexOf('q-404') >= 0) {
       const err = new Error('unknown quest');
       err.status = 404;
@@ -226,6 +248,10 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
   // Every request goes through the client queue with a 250-500 ms gap, so the first
   // video tick can sit behind four other calls: wait for the queue, not for a round number.
   await new Promise((r) => setTimeout(r, 4500));
+  // The failing claim sleeps 3 s between its two attempts, so wait for the second one
+  // instead of guessing a round number.
+  const claimPosts = () => calls.filter((c) => String((c && c.url) || '').indexOf('q-claimfail') >= 0).length;
+  for (let i = 0; i < 25 && claimPosts() < 2; i += 1) await new Promise((r) => setTimeout(r, 200));
   const video = calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('/video-progress') >= 0);
   const enrol = calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('/enroll') >= 0);
   if (video.length < 2) failures.push('the rate-limited video request was never retried; calls=' + JSON.stringify(calls.map((c) => String(c.url))));
@@ -236,6 +262,17 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
   const listNode = panel && panel.querySelector('[data-list]');
   const cards = listNode && listNode.children ? listNode.children.map((card) => card.html || '').join('') : '';
   if (cards.indexOf('700 Orbs') < 0) failures.push('the orb reward is not on the card');
+  // A quest that has not started is listed, labelled and never touched.
+  if (cards.indexOf('SOON') < 0) failures.push('the future quest is not labelled SOON');
+  const soonCard = listNode && listNode.children
+    ? listNode.children.find((card) => (card.html || '').indexOf('data-id="q-soon"') >= 0)
+    : null;
+  if (!soonCard) failures.push('the future quest has no card');
+  else if ((soonCard.html || '').indexOf('disabled') < 0) failures.push('the future quest can be ticked');
+  if (calls.filter((c) => String((c && c.url) || '').indexOf('q-soon') >= 0).length) failures.push('a future quest was driven');
+  // A refused claim gets exactly two attempts, then a pill the user has to press.
+  if (claimPosts() !== 2) failures.push('the failing claim was attempted ' + claimPosts() + ' times, expected 2');
+  if (cards.indexOf('dqc-claim') < 0) failures.push('the failed claim left no CLAIM pill');
   const logBox = panel && panel.querySelector('[data-log]');
   const logged = logBox ? logBox.textContent : '';
   if (logged.indexOf('quests on this account') < 0) failures.push('the run never logged the quest count');
@@ -258,7 +295,7 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
   await new Promise((r) => setTimeout(r, 200));
   const after = logBox ? logBox.textContent : '';
   if (after.indexOf('blocked until') < 0) failures.push('the diagnosis printed nothing about the block');
-  if (after.indexOf('5 quests') < 0) failures.push('the diagnosis miscounted the quests');
+  if (after.indexOf('7 quests') < 0) failures.push('the diagnosis miscounted the quests');
   if (stop && stop.handlers.click) stop.handlers.click[0]();
   const before = calls.length;
   await new Promise((r) => setTimeout(r, 800));
@@ -272,6 +309,7 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
     calls.length = 0;
     start.handlers.click[0]();
     await new Promise((r) => setTimeout(r, 2500));
+    if (calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('q-claimfail') >= 0).length) failures.push('a failed claim was retried on its own after a restart');
     const again = calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('q-game') >= 0);
     if (again.length) failures.push('an unchecked quest was still driven');
     if (!calls.filter((c) => String((c && (c.url || c.path)) || '').indexOf('/video-progress') >= 0).length) failures.push('the checked quest stopped running after a restart');

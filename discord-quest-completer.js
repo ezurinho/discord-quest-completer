@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 4.0.0
+ * Discord Quest Completer 4.0.1
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '4.0.0';
+  const VERSION = '4.0.1';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -576,6 +576,7 @@
   async function enroll(quest) {
     if (quest.userStatus && quest.userStatus.enrolledAt) return;
     if (enrollClosed) return;
+    if (!isSupported(taskOf(quest), quest)) return;
     try {
       await enqueue('/quests/' + quest.id + '/enroll', enrollBody(quest));
       log('joined ' + (taskOf(quest) ? taskOf(quest).name : quest.id), 'ok');
@@ -967,7 +968,7 @@
       state.chosen = true;
       for (const quest of state.quests) {
         const task = taskOf(quest);
-        if (isSupported(task)) state.selected.add(quest.id);
+        if (isSupported(task, quest)) state.selected.add(quest.id);
       }
       render();
     }
@@ -979,6 +980,9 @@
       const task = taskOf(quest);
       if (!task) continue;
       if (!state.selected.has(quest.id)) continue;
+      // A quest that has not started (or has nothing to drive it) is never enrolled: the
+      // request only comes back 404 and puts the quest on the block list.
+      if (!isSupported(task, quest)) continue;
       const value = questValue(quest, task.key);
       const joined = Boolean(quest.userStatus && quest.userStatus.enrolledAt);
       if (!joined) {
