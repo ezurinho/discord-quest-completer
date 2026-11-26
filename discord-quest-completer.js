@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 2.0.0
+ * Discord Quest Completer 2.1.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '2.0.0';
+  const VERSION = '2.1.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -118,7 +118,7 @@
       // Discord's client can swallow a call while rate limited and never settle it,
       // which left run() waiting forever with no line in the log. Every request now
       // has a deadline.
-      const timer = setTimeout(() => reject({ status: 0, message: 'request timed out' }), 25000);
+      const timer = setTimeout(() => reject({ status: 0, message: 'request timed out' }), 12000);
       const done = (fn, value) => { clearTimeout(timer); fn(value); };
       traffic.queue.push({ url, body, resolve: (v) => done(resolve, v), reject: (e) => done(reject, e) });
       drain();
@@ -480,17 +480,19 @@
     state.quests = allQuests(mods);
     render();
     log(state.quests.length + ' quests on this account');
-    const joining = state.quests.filter((quest) => !(quest.userStatus && quest.userStatus.completedAt));
-    await Promise.all(joining.map((quest) => enroll(quest)));
-    state.quests = allQuests(mods);
+    // Nothing here waits for the network. The old version enrolled every quest first
+    // and only then logged anything, so one request the client never settled hid the
+    // whole run behind an empty panel. Enrolment is now fire-and-forget and the
+    // store refresh picks up the result.
     for (const quest of state.quests) {
       if (quest.userStatus && quest.userStatus.completedAt) continue;
       const task = taskOf(quest);
       if (!task) continue;
       const value = questValue(quest, task.key);
-      if (!quest.userStatus || !quest.userStatus.enrolledAt) {
-        blocked.add(quest.id);
-        log('not joined: ' + task.name, 'err');
+      const joined = Boolean(quest.userStatus && quest.userStatus.enrolledAt);
+      if (!joined) {
+        log('not joined: ' + task.name + ' · asking to join', 'err');
+        enroll(quest).catch(() => {});
         continue;
       }
       log(task.name + ' · ' + task.type + ' · ' + value + '/' + task.target);

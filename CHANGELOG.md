@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.0 — 2026-11-26
+
+Nothing waits for enrolment any more.
+
+- 2.0.0 still logged nothing because the run enrolled every quest **before** printing
+  anything, and `Promise.all` over 46 requests meant a quiet panel until the slowest
+  one settled (or timed out, 25 s each, serialised). The classification and the log now
+  come first; enrolment is fire-and-forget per quest.
+- Requests time out in 12 s instead of 25 s.
+- A quest that is not enrolled is logged as `not joined · asking to join` and picked up
+  by the 60 s store refresh when Discord accepts it, instead of being written off.
+
 ## 2.0.0 — 2026-11-26
 
 It stops hanging, and it tells you where.
