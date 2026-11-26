@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 1.3.0
+ * Discord Quest Completer 1.4.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '1.3.0';
+  const VERSION = '1.4.0';
   const VIDEO_STEP = 5;
   const VIDEO_TICK = 900;
   // Pasted twice? The old panel goes, not a second one: two copies would double
@@ -18,6 +18,17 @@
   if (previous) previous.remove();
 
   const state = { running: false, quests: [], lines: [], timers: new Map(), pulse: null, ui: null };
+  // A quest that answers 404 will answer 404 on every retry: remember it instead of
+  // burning the queue. A 429 pauses every video, not just the one that hit it.
+  const blocked = new Set();
+  let pauseUntil = 0;
+
+  function errorText(err) {
+    if (!err) return 'unknown error';
+    if (err.body && err.body.message) return err.body.message;
+    if (err.message) return err.message;
+    return String(err);
+  }
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   // ---- client internals -------------------------------------------------
   // The mangled export keys (A, Bo, h, Ay) change between Discord builds, so each
@@ -98,8 +109,9 @@
       } catch (err) {
         if (err && err.status === 429) {
           const wait = Number(err.body && err.body.retry_after) || 5;
+          pauseUntil = Math.max(pauseUntil, Date.now() + wait * 1000 + 500);
           traffic.queue.unshift(req);
-          log('rate limited: waiting ' + wait + 's', 'err');
+          log('rate limited: waiting ' + wait.toFixed(1) + 's', 'err');
           await sleep(wait * 1000 + 500);
         } else {
           req.reject(err);
@@ -230,7 +242,7 @@
     const value = task ? questValue(quest, task.key) : 0;
     const target = task ? task.target : 0;
     const pct = target ? Math.min(100, Math.round((value / target) * 100)) : done ? 100 : 0;
-    const label = done ? 'DONE' : live ? 'RUNNING' : quest.userStatus && quest.userStatus.enrolledAt ? 'QUEUE' : 'NOT JOINED';
+    const label = blocked.has(quest.id) ? 'UNAVAILABLE' : done ? 'DONE' : live ? 'RUNNING' : quest.userStatus && quest.userStatus.enrolledAt ? 'QUEUE' : 'NOT JOINED';
     const icon = task && task.type === 'VIDEO' ? ICON.video : task && (task.type === 'GAME' || task.type === 'ACTIVITY') ? ICON.game : ICON.clock;
     const card = document.createElement('div');
     card.className = 'dqc-card' + (done ? ' done' : live ? ' live' : '');
@@ -271,6 +283,7 @@
   }
 
   async function videoTick(quest, task) {
+    if (Date.now() < pauseUntil || blocked.has(quest.id)) return;
     const current = questValue(quest, task.key);
     if (current >= task.target) {
       log('done ' + task.name, 'ok');
@@ -282,7 +295,13 @@
       await enqueue('/quests/' + quest.id + '/video-progress', { timestamp: next });
       log(task.name + ' · ' + next + '/' + task.target + ' s');
     } catch (err) {
-      log('video error: ' + (err && err.message ? err.message : err), 'err');
+      if (err && err.status === 404) {
+        blocked.add(quest.id);
+        stopVideo(quest.id);
+        log(task.name + ': not available on this account', 'err');
+      } else {
+        log('video error: ' + errorText(err), 'err');
+      }
     }
   }
 
@@ -345,8 +364,17 @@
     for (const quest of state.quests) {
       if (quest.userStatus && quest.userStatus.completedAt) continue;
       await enroll(quest);
+    }
+    state.quests = allQuests(mods);
+    for (const quest of state.quests) {
+      if (quest.userStatus && quest.userStatus.completedAt) continue;
       const task = taskOf(quest);
       if (!task) continue;
+      if (!quest.userStatus || !quest.userStatus.enrolledAt) {
+        blocked.add(quest.id);
+        log('not joined: ' + task.name, 'err');
+        continue;
+      }
       if (task.type === 'VIDEO') startVideo(quest, task);
       else pulseGame(mods, quest, task);
     }

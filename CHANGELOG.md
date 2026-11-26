@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0 — 2026-11-26
+
+Stops hammering quests that cannot answer.
+
+- A 404 on `video-progress` marks that quest UNAVAILABLE and stops its timer, instead
+  of retrying every 900 ms until the queue turns into 429s.
+- A 429 pauses every video for the `retry_after` window instead of only the request
+  that hit it.
+- Quests that are still `NOT JOINED` after enrolling are skipped with a reason in the
+  log, so the panel says why instead of pretending they are queued.
+- Errors read `body.message` first: no more `video error: [object Object]`.
+
 ## 1.3.0 — 2026-11-26
 
 Finds the modules the client actually ships.
