@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.0 — 2026-11-26
+
+Quests the account cannot join stop pretending they can.
+
+- A 404 from `enroll` marks the quest UNAVAILABLE and logs `cannot join: <name>`.
+  Before, it printed `[object Object]` and tried again on every cycle.
+- The ETA only appears for quests that are actually advancing; a NOT JOINED card no
+  longer promises `~26s left`.
+
 ## 1.5.0 — 2026-11-26
 
 The panel tells you how long it will take, and survives a reload.

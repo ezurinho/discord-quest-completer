@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 1.5.0
+ * Discord Quest Completer 1.6.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '1.5.0';
+  const VERSION = '1.6.0';
   const VIDEO_STEP = 5;
   const VIDEO_TICK = 900;
   // Pasted twice? The old panel goes, not a second one: two copies would double
@@ -272,6 +272,7 @@
     const target = task ? task.target : 0;
     const pct = target ? Math.min(100, Math.round((value / target) * 100)) : done ? 100 : 0;
     const label = blocked.has(quest.id) ? 'UNAVAILABLE' : done ? 'DONE' : live ? 'RUNNING' : quest.userStatus && quest.userStatus.enrolledAt ? 'QUEUE' : 'NOT JOINED';
+    const showEta = live || (state.running && !done && !blocked.has(quest.id) && Boolean(quest.userStatus && quest.userStatus.enrolledAt));
     const icon = task && task.type === 'VIDEO' ? ICON.video : task && (task.type === 'GAME' || task.type === 'ACTIVITY') ? ICON.game : ICON.clock;
     const card = document.createElement('div');
     card.className = 'dqc-card' + (done ? ' done' : live ? ' live' : '');
@@ -279,7 +280,7 @@
       '<div class="dqc-main"><div class="dqc-name"><span class="dqc-pill">' + label + '</span>' +
       esc(task ? task.name : quest.id) + '</div>' +
       '<div class="dqc-track"><div class="dqc-fill" style="width:' + pct + '%"></div></div>' +
-      '<div class="dqc-meta">' + (target ? value + ' / ' + target + ' s' + (pct ? ' · ' + pct + '%' : '') + ((live || (state.running && !done && !blocked.has(quest.id) && pct < 100)) ? ' ' + etaText(value, target) : '') : 'waiting for a task config') + '</div></div>';
+      '<div class="dqc-meta">' + (target ? value + ' / ' + target + ' s' + (pct ? ' · ' + pct + '%' : '') + (showEta && pct < 100 ? ' ' + etaText(value, target) : '') : 'waiting for a task config') + '</div></div>';
     return card;
   }
 
@@ -307,7 +308,14 @@
       await enqueue('/quests/' + quest.id + '/enroll', { location: 1 });
       log('joined ' + (taskOf(quest) ? taskOf(quest).name : quest.id), 'ok');
     } catch (err) {
-      log('enroll failed: ' + (err && err.message ? err.message : err), 'err');
+      // 404 here means the account cannot join it at all: expired, region-locked,
+      // or already claimed elsewhere. Retrying would only burn the queue.
+      if (err && err.status === 404) {
+        blocked.add(quest.id);
+        log('cannot join: ' + (taskOf(quest) ? taskOf(quest).name : quest.id), 'err');
+      } else {
+        log('enroll failed: ' + errorText(err), 'err');
+      }
     }
   }
 
