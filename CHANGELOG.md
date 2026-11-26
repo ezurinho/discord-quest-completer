@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.6.0 — 2026-11-26
+
+Pick what runs, and never run twice.
+
+- Every card has a checkbox, selected by default for video and game quests. Start only
+  drives what is ticked, so a broken quest can be left out without editing the file.
+- `STREAM` and `ACHIEVEMENT` cards say NOT AUTOMATABLE and their checkbox is disabled:
+  a stream needs a real Go Live with another person in the channel, and achievements
+  are validated by the game or the activity backend, not by the client.
+- Pasting again stops the previous instance first. Before, the old panel's timers kept
+  running, so two video loops and two request queues hit the same account.
+
 ## 2.5.0 — 2026-11-26
 
 The July 2026 field move, and video first.

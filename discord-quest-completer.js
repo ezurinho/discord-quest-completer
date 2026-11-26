@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 2.5.0
+ * Discord Quest Completer 2.6.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '2.5.0';
+  const VERSION = '2.6.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -18,8 +18,13 @@
   // every progress request.
   const previous = document.getElementById('dqc-panel');
   if (previous) previous.remove();
+  // The old instance kept its own timers: two panels meant two video loops and two
+  // request queues against one account, which is how a 429 gets made.
+  if (typeof window.__dqcStop === 'function') {
+    try { window.__dqcStop(); } catch (err) { /* the old copy is already gone */ }
+  }
 
-  const state = { running: false, quests: [], lines: [], timers: new Map(), pulse: null, ui: null, video: null, cursor: 0 };
+  const state = { running: false, quests: [], lines: [], timers: new Map(), pulse: null, ui: null, video: null, cursor: 0, selected: new Set(), chosen: false };
   // A quest that answers 404 will answer 404 on every retry: remember it instead of
   // burning the queue. A 429 pauses every video, not just the one that hit it.
   const blocked = new Set();
@@ -199,6 +204,8 @@
     '#dqc-stop{background:rgba(0,0,0,.22);color:#fff}',
     '#dqc-hide{background:transparent;color:rgba(255,255,255,.8);padding:6px 6px}',
     '#dqc-body{padding:10px 10px 4px;max-height:340px;overflow:auto}',
+    '.dqc-pick{accent-color:#5865f2;margin:2px 0 0;cursor:pointer}',
+    '.dqc-pick:disabled{cursor:not-allowed;opacity:.35}',
     '.dqc-card{display:flex;gap:10px;align-items:center;padding:9px 10px;border-radius:11px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.05);margin-bottom:7px}',
     '.dqc-card.done{background:rgba(45,190,120,.1);border-color:rgba(45,190,120,.28)}',
     '.dqc-card.live{background:rgba(96,120,255,.14);border-color:rgba(120,140,255,.42);box-shadow:0 0 0 1px rgba(120,140,255,.18) inset}',
@@ -282,6 +289,11 @@
         panel.style.right = 'auto';
       }
     } catch (err) { /* a corrupt position is not worth a broken panel */ }
+    panel.querySelector('[data-list]').addEventListener('change', (event) => {
+      const box = event.target;
+      if (!box || !box.classList || !box.classList.contains('dqc-pick')) return;
+      if (box.checked) state.selected.add(box.dataset.id); else state.selected.delete(box.dataset.id);
+    });
     drag(panel, panel.querySelector('[data-drag]'));
     return panel;
   }
@@ -325,12 +337,18 @@
     const value = task ? questValue(quest, task.key) : 0;
     const target = task ? task.target : 0;
     const pct = target ? Math.min(100, Math.round((value / target) * 100)) : done ? 100 : 0;
-    const label = blocked.has(quest.id) ? 'UNAVAILABLE' : done ? 'DONE' : live ? 'RUNNING' : quest.userStatus && quest.userStatus.enrolledAt ? 'QUEUE' : 'NOT JOINED';
+    const label = blocked.has(quest.id) ? 'UNAVAILABLE' : !supported && !done ? 'NOT AUTOMATABLE' : done ? 'DONE' : live ? 'RUNNING' : quest.userStatus && quest.userStatus.enrolledAt ? 'QUEUE' : 'NOT JOINED';
     const showEta = live || (state.running && !done && !blocked.has(quest.id) && Boolean(quest.userStatus && quest.userStatus.enrolledAt));
     const icon = task && task.type === 'VIDEO' ? ICON.video : task && (task.type === 'GAME' || task.type === 'ACTIVITY') ? ICON.game : ICON.clock;
+    // Streams need a real Go Live plus someone else in the channel, and achievements
+    // are validated by the game or the activity backend. Offering them a checkbox
+    // would promise work the client cannot do.
+    const supported = Boolean(task) && (task.type === 'VIDEO' || task.type === 'GAME');
     const card = document.createElement('div');
     card.className = 'dqc-card' + (done ? ' done' : live ? ' live' : '');
-    card.innerHTML = '<div class="dqc-icon">' + icon + '</div>' +
+    card.innerHTML = '<input type="checkbox" class="dqc-pick" data-id="' + quest.id + '"' +
+      (supported ? '' : ' disabled') + (state.selected.has(quest.id) ? ' checked' : '') + '>' +
+      '<div class="dqc-icon">' + icon + '</div>' +
       '<div class="dqc-main"><div class="dqc-name"><span class="dqc-pill">' + label + '</span>' +
       esc(task ? task.name : quest.id) + '</div>' +
       '<div class="dqc-track"><div class="dqc-fill" style="width:' + pct + '%"></div></div>' +
@@ -549,6 +567,14 @@
     // and only then logged anything, so one request the client never settled hid the
     // whole run behind an empty panel. Enrolment is now fire-and-forget and the
     // store refresh picks up the result.
+    if (!state.chosen) {
+      state.chosen = true;
+      for (const quest of state.quests) {
+        const task = taskOf(quest);
+        if (task && (task.type === 'VIDEO' || task.type === 'GAME')) state.selected.add(quest.id);
+      }
+      render();
+    }
     for (const quest of state.quests) {
       if (quest.userStatus && quest.userStatus.completedAt) {
         if (!quest.userStatus.claimedAt) claim(quest).catch(() => {});
@@ -556,6 +582,7 @@
       }
       const task = taskOf(quest);
       if (!task) continue;
+      if (state.selected.size && !state.selected.has(quest.id)) continue;
       const value = questValue(quest, task.key);
       const joined = Boolean(quest.userStatus && quest.userStatus.enrolledAt);
       if (!joined) {
@@ -609,6 +636,7 @@
     console.error('[dqc]', event.reason);
   });
 
+  window.__dqcStop = stop;
   mount();
   log(NAME + ' ' + VERSION + ' ready · press Start', 'ok');
   state.ui.querySelector('#dqc-foot span:last-child').textContent = 'Ctrl+Shift+I to reopen';
