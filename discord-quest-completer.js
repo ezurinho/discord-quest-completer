@@ -1,36 +1,30 @@
 /*
- * Discord Quest Completer 1.1.0
+ * Discord Quest Completer 1.2.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
  * Chromium blocks pasting into the console until you type `allow pasting` and press Enter.
- * If the Quest panel does not appear, the log line in the console says why.
- *
  * This automates your account against Discord's Terms of Service. That risk is yours.
  */
 (() => {
   'use strict';
-  // Discord gates the client behind webpack; every automation script has to borrow
-  // the client's own dispatcher and HTTP client instead of guessing at endpoints.
-  const NAME = 'Discord Quest Completer';
-  const VERSION = '1.1.0';
+  const NAME = 'Quest Completer';
+  const VERSION = '1.2.0';
   const VIDEO_STEP = 5;
   const VIDEO_TICK = 900;
   const ENROLL_ON_START = true;
 
-  // Pasted twice? The old panel goes, not a second one: two script instances would
-  // drive the same quest and double every progress request.
   const previous = document.getElementById('dqc-panel');
   if (previous) previous.remove();
 
-  const state = { running: false, quests: [], lines: [], videoTimers: new Map(), gameTimer: null, ui: null };
+  const state = { running: false, quests: [], lines: [], timers: new Map(), pulse: null, ui: null };
 
   // ---- client internals -------------------------------------------------
   function webpackModules() {
     const chunk = window.webpackChunkdiscord_app;
     if (!chunk) return null;
     const found = [];
-    const key = 'cw_' + Math.random().toString(36).slice(2);
+    const key = 'dqc_' + Math.random().toString(36).slice(2);
     chunk.push([[key], {}, (req) => found.push(req)]);
     const index = chunk.findIndex((entry) => entry && entry[0] && entry[0][0] === key);
     if (index >= 0) chunk.splice(index, 1);
@@ -51,79 +45,132 @@
   }
 
   function modules() {
-    const dispatcher = findBy((e) => {
-      const d = e && (e.default || e);
-      return d && typeof d.dispatch === 'function' && typeof d.subscribe === 'function' ? d : null;
-    });
-    const http = findBy((e) => (e && typeof e.get === 'function' && typeof e.post === 'function' ? e : null));
-    const store = findBy((e) => {
-      const s = e && (e.default || e);
-      return s && typeof s.getQuest === 'function' ? s : null;
-    });
-    return { dispatcher, http, store };
+    return {
+      dispatcher: findBy((e) => {
+        const d = e && (e.default || e);
+        return d && typeof d.dispatch === 'function' && typeof d.subscribe === 'function' ? d : null;
+      }),
+      http: findBy((e) => (e && typeof e.get === 'function' && typeof e.post === 'function' ? e : null)),
+      store: findBy((e) => {
+        const s = e && (e.default || e);
+        return s && typeof s.getQuest === 'function' ? s : null;
+      })
+    };
   }
 
-  // ---- logging and panel ------------------------------------------------
-  function log(text) {
-    const stamp = new Date().toLocaleTimeString();
-    state.lines.push('[' + stamp + '] ' + text);
-    if (state.lines.length > 120) state.lines.shift();
+  // ---- panel ------------------------------------------------------------
+  const CSS = [
+    '#dqc-panel{position:fixed;right:20px;top:64px;width:344px;z-index:2147483000;color:#e7e9ee;font:13px/1.45 "Inter",system-ui,sans-serif;border-radius:16px;border:1px solid rgba(255,255,255,.09);background:linear-gradient(180deg,rgba(32,34,40,.97),rgba(22,23,28,.98));box-shadow:0 24px 60px -12px rgba(0,0,0,.7),0 0 0 1px rgba(0,0,0,.4);overflow:hidden;backdrop-filter:blur(14px)}',
+    '#dqc-panel header{display:flex;align-items:center;gap:10px;padding:14px 14px 12px;background:linear-gradient(120deg,#6d4bff 0%,#4468ff 55%,#2f9dff 100%);cursor:grab;user-select:none}',
+    '#dqc-panel header:active{cursor:grabbing}',
+    '#dqc-logo{width:28px;height:28px;border-radius:9px;background:rgba(255,255,255,.16);display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.28)}',
+    '#dqc-title{font-weight:700;font-size:13px;letter-spacing:.2px;line-height:1.1;margin:0}',
+    '#dqc-ver{font-size:10px;color:rgba(255,255,255,.72);letter-spacing:.4px}',
+    '#dqc-actions{margin-left:auto;display:flex;gap:6px}',
+    '.dqc-btn{border:0;border-radius:8px;padding:6px 11px;font:600 11px/1 system-ui,sans-serif;letter-spacing:.4px;cursor:pointer;transition:transform .12s,filter .12s}',
+    '.dqc-btn:active{transform:scale(.96)}',
+    '.dqc-btn:disabled{opacity:.45;cursor:default;filter:grayscale(.3)}',
+    '#dqc-start{background:#fff;color:#2a2c33}',
+    '#dqc-stop{background:rgba(0,0,0,.22);color:#fff}',
+    '#dqc-hide{background:transparent;color:rgba(255,255,255,.8);padding:6px 6px}',
+    '#dqc-body{padding:10px 10px 4px;max-height:340px;overflow:auto}',
+    '.dqc-card{display:flex;gap:10px;align-items:center;padding:9px 10px;border-radius:11px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.05);margin-bottom:7px}',
+    '.dqc-card.done{background:rgba(45,190,120,.1);border-color:rgba(45,190,120,.28)}',
+    '.dqc-card.live{background:rgba(96,120,255,.14);border-color:rgba(120,140,255,.42);box-shadow:0 0 0 1px rgba(120,140,255,.18) inset}',
+    '.dqc-icon{width:30px;height:30px;flex:0 0 30px;border-radius:9px;display:grid;place-items:center;background:rgba(255,255,255,.07);color:#a7b0c0}',
+    '.dqc-card.live .dqc-icon{color:#aab6ff;background:rgba(120,140,255,.18)}',
+    '.dqc-card.done .dqc-icon{color:#5bdba0;background:rgba(45,190,120,.16)}',
+    '.dqc-main{flex:1;min-width:0}',
+    '.dqc-name{font-weight:600;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+    '.dqc-pill{float:right;margin-left:8px;font-size:9px;font-weight:700;letter-spacing:.6px;padding:2px 6px;border-radius:5px;background:rgba(255,255,255,.08);color:#98a1b0}',
+    '.dqc-card.live .dqc-pill{background:rgba(120,140,255,.22);color:#c3ccff}',
+    '.dqc-card.done .dqc-pill{background:rgba(45,190,120,.2);color:#7fe4b3}',
+    '.dqc-track{height:5px;border-radius:99px;background:rgba(255,255,255,.08);margin-top:6px;overflow:hidden}',
+    '.dqc-fill{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#6d4bff,#3ea8ff);transition:width .45s ease}',
+    '.dqc-card.done .dqc-fill{background:linear-gradient(90deg,#2dbe78,#7fe4b3)}',
+    '.dqc-meta{font-size:10px;color:#8b93a3;margin-top:4px;letter-spacing:.2px}',
+    '#dqc-log{margin:2px 4px 0;padding:9px 10px;max-height:124px;overflow:auto;border-radius:10px;background:rgba(0,0,0,.34);border:1px solid rgba(255,255,255,.05);font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;color:#8f97a6;white-space:pre-wrap}',
+    '#dqc-log .ok{color:#7fe4b3}',
+    '#dqc-log .err{color:#ff8f9a}',
+    '#dqc-log .time{color:#5d6472}',
+    '#dqc-foot{padding:9px 12px 11px;font-size:10px;color:#6f7787;letter-spacing:.3px;display:flex;justify-content:space-between}',
+    '#dqc-foot b{color:#98a1b0;font-weight:600}'
+  ].join('');
+
+  const ICON = {
+    bolt: '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4.5 13.5H11l-1 8.5 9-12h-6l1-8z"/></svg>',
+    video: '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M4 5h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm15.5 3.4 3.1-2a.7.7 0 0 1 1.1.6v10a.7.7 0 0 1-1.1.6l-3.1-2z"/></svg>',
+    game: '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M7 8h10a5 5 0 0 1 0 10H7A5 5 0 0 1 7 8zm1 3v1.5H6.5V14H8v1.5h1.5V14H11v-1.5H9.5V11zm6.5.8a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm2 2.2a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg>',
+    clock: '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 5v5.6l4 2.3-1 1.7-5-2.9V7z"/></svg>'
+  };
+
+  function esc(text) {
+    return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function log(text, kind) {
+    state.lines.push({ text, kind: kind || '' });
+    if (state.lines.length > 140) state.lines.shift();
     const box = state.ui && state.ui.querySelector('[data-log]');
-    if (box) { box.textContent = state.lines.join('\n'); box.scrollTop = box.scrollHeight; }
+    if (!box) return;
+    const row = document.createElement('div');
+    row.className = kind || '';
+    const time = document.createElement('span');
+    time.className = 'time';
+    time.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '  ';
+    row.appendChild(time);
+    row.appendChild(document.createTextNode(text));
+    box.appendChild(row);
+    while (box.childElementCount > 140) box.removeChild(box.firstChild);
+    box.scrollTop = box.scrollHeight;
   }
 
-  function progressText(quest) {
-    const tasks = (quest.config && quest.config.taskConfig && quest.config.taskConfig.tasks) || quest.configDefinition || {};
-    const keys = Object.keys(tasks || {});
-    if (!keys.length) return 'no tasks';
-    const parts = [];
-    for (const key of keys) {
-      const task = tasks[key] || {};
-      const current = (quest.userStatus && quest.userStatus.progress && quest.userStatus.progress[key] && quest.userStatus.progress[key].value) || 0;
-      parts.push(key + ' ' + current + '/' + (task.target || '?'));
-    }
-    return parts.join(' · ');
+  function tasksOf(quest) {
+    return (quest && quest.config && quest.config.taskConfig && quest.config.taskConfig.tasks) || {};
+  }
+
+  function taskValue(quest, key) {
+    const p = quest && quest.userStatus && quest.userStatus.progress;
+    return (p && p[key] && p[key].value) || 0;
+  }
+
+  function cardFor(quest) {
+    const tasks = tasksOf(quest);
+    const key = Object.keys(tasks)[0] || '';
+    const target = (tasks[key] && tasks[key].target) || 0;
+    const type = (tasks[key] && tasks[key].type) || '';
+    const value = taskValue(quest, key);
+    const done = Boolean(quest.userStatus && quest.userStatus.completedAt);
+    const live = state.running && !done && type === 'WATCH_VIDEO';
+    const pct = target ? Math.min(100, Math.round((value / target) * 100)) : done ? 100 : 0;
+    const card = document.createElement('div');
+    card.className = 'dqc-card' + (done ? ' done' : live ? ' live' : '');
+    const icon = done ? ICON.game : /VIDEO/.test(type) ? ICON.video : /PLAY/.test(type) ? ICON.game : ICON.clock;
+    card.innerHTML = '<div class="dqc-icon">' + icon + '</div>' +
+      '<div class="dqc-main"><div class="dqc-name"><span class="dqc-pill">' + (done ? 'DONE' : live ? 'RUNNING' : 'QUEUE') + '</span>' +
+      esc((quest.config && quest.config.messages && quest.config.messages.questName) || quest.id) + '</div>' +
+      '<div class="dqc-track"><div class="dqc-fill" style="width:' + pct + '%"></div></div>' +
+      '<div class="dqc-meta">' + (target ? value + ' / ' + target + ' s' : 'waiting for the client') + (pct ? ' · ' + pct + '%' : '') + '</div></div>';
+    return card;
   }
 
   function render() {
     const list = state.ui && state.ui.querySelector('[data-list]');
     if (!list) return;
     list.textContent = '';
-    for (const quest of state.quests) {
-      const row = document.createElement('div');
-      row.className = 'dqc-row';
-      const title = document.createElement('div');
-      title.className = 'dqc-title';
-      title.textContent = (quest.config && quest.config.messages && quest.config.messages.questName) || quest.id;
-      const meta = document.createElement('div');
-      meta.className = 'dqc-meta';
-      meta.textContent = (quest.userStatus && quest.userStatus.completedAt ? 'done · ' : '') + progressText(quest);
-      row.appendChild(title);
-      row.appendChild(meta);
-      list.appendChild(row);
-    }
     if (!state.quests.length) {
       const empty = document.createElement('div');
       empty.className = 'dqc-meta';
+      empty.style.padding = '14px 6px';
       empty.textContent = 'No quests on this account right now.';
       list.appendChild(empty);
+      return;
     }
+    for (const quest of state.quests) list.appendChild(cardFor(quest));
+    const done = state.quests.filter((q) => q.userStatus && q.userStatus.completedAt).length;
+    const foot = state.ui.querySelector('[data-count]');
+    if (foot) foot.textContent = done + ' / ' + state.quests.length + ' claimed';
   }
-
-  const CSS = [
-    '#dqc-panel{position:fixed;right:16px;bottom:16px;width:320px;z-index:2147483000;background:#1e1f22;color:#dbdee1;border:1px solid #2b2d31;border-radius:10px;font:12px/1.45 system-ui,sans-serif;box-shadow:0 12px 32px rgba(0,0,0,.45)}',
-    '#dqc-panel header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:#232428;border-radius:10px 10px 0 0;cursor:move}',
-    '#dqc-panel h1{margin:0;font-size:12px;font-weight:700;letter-spacing:.3px}',
-    '#dqc-panel button{background:#5865f2;color:#fff;border:0;border-radius:6px;padding:5px 10px;font:inherit;cursor:pointer}',
-    '#dqc-panel button[data-stop]{background:#da373c}',
-    '#dqc-panel button:disabled{opacity:.5;cursor:default}',
-    '#dqc-panel [data-list]{max-height:220px;overflow:auto;padding:8px 12px}',
-    '.dqc-row{padding:6px 0;border-bottom:1px solid #2b2d31}',
-    '.dqc-row:last-child{border-bottom:0}',
-    '.dqc-title{font-weight:600}',
-    '.dqc-meta{color:#949ba4;font-size:11px}',
-    '#dqc-panel [data-log]{margin:0;padding:8px 12px;max-height:120px;overflow:auto;background:#0e0f10;color:#949ba4;font:11px/1.4 ui-monospace,monospace;white-space:pre-wrap;border-radius:0 0 10px 10px}'
-  ].join('');
 
   function mount() {
     if (state.ui) return state.ui;
@@ -133,38 +180,45 @@
     const panel = document.createElement('section');
     panel.id = 'dqc-panel';
     panel.innerHTML = [
-      '<header data-drag><h1>' + NAME + ' ' + VERSION + '</h1>',
-      '<span><button data-start>Start</button> <button data-stop disabled>Stop</button></span></header>',
-      '<div data-list></div>',
-      '<pre data-log></pre>'
+      '<header data-drag><div id="dqc-logo">' + ICON.bolt + '</div>',
+      '<div><h1 id="dqc-title">' + NAME + '</h1><div id="dqc-ver">v' + VERSION + '</div></div>',
+      '<div id="dqc-actions">',
+      '<button class="dqc-btn" id="dqc-start">Start</button>',
+      '<button class="dqc-btn" id="dqc-stop" disabled>Stop</button>',
+      '<button class="dqc-btn" id="dqc-hide" title="Hide (re-paste to reopen)">×</button>',
+      '</div></header>',
+      '<div id="dqc-body"><div data-list></div></div>',
+      '<div id="dqc-log" data-log></div>',
+      '<div id="dqc-foot"><span data-count>—</span><span><b>Ctrl+Shift+I</b> to reopen</span></div>'
     ].join('');
-    panel.querySelector('[data-start]').addEventListener('click', () => run());
-    panel.querySelector('[data-stop]').addEventListener('click', () => stop());
     document.body.appendChild(panel);
     state.ui = panel;
+    panel.querySelector('#dqc-start').addEventListener('click', () => run());
+    panel.querySelector('#dqc-stop').addEventListener('click', () => stop());
+    panel.querySelector('#dqc-hide').addEventListener('click', () => panel.remove());
     drag(panel, panel.querySelector('[data-drag]'));
     return panel;
   }
 
   function drag(panel, handle) {
-    let ox = 0, oy = 0, dragging = false;
+    let ox = 0, oy = 0, moving = false;
     handle.addEventListener('pointerdown', (event) => {
-      dragging = true;
+      if (event.target.closest('button')) return;
+      moving = true;
       ox = event.clientX - panel.offsetLeft;
       oy = event.clientY - panel.offsetTop;
       handle.setPointerCapture(event.pointerId);
     });
     handle.addEventListener('pointermove', (event) => {
-      if (!dragging) return;
+      if (!moving) return;
       panel.style.left = (event.clientX - ox) + 'px';
       panel.style.top = (event.clientY - oy) + 'px';
       panel.style.right = 'auto';
-      panel.style.bottom = 'auto';
     });
-    handle.addEventListener('pointerup', () => { dragging = false; });
+    handle.addEventListener('pointerup', () => { moving = false; });
   }
 
-  // ---- the work ---------------------------------------------------------
+  // ---- work ------------------------------------------------------------
   function questList(mods) {
     const store = mods.store;
     if (!store) return [];
@@ -173,90 +227,85 @@
   }
 
   async function enroll(mods, quest) {
-    if (!ENROLL_ON_START || !mods.http) return;
-    if (quest.userStatus) return;
+    if (!ENROLL_ON_START || !mods.http || quest.userStatus) return;
     try {
       await mods.http.post({ url: '/quests/' + quest.id + '/enroll' });
-      log('enrolled ' + quest.id);
+      log('enrolled ' + quest.id, 'ok');
     } catch (err) {
-      log('enroll failed ' + quest.id + ': ' + err.message);
+      log('enroll failed: ' + err.message, 'err');
     }
   }
 
   function videoTask(quest) {
-    const tasks = (quest.config && quest.config.taskConfig && quest.config.taskConfig.tasks) || {};
+    const tasks = tasksOf(quest);
     const key = Object.keys(tasks).find((k) => tasks[k] && tasks[k].type === 'WATCH_VIDEO');
-    const definition = (quest.config && quest.config.taskConfig && quest.config.taskConfig.tasks) || quest.configDefinition || {};
-    const detail = (key && (definition[key] || quest.configDefinition || {})) || {};
-    return key ? { key, target: tasks[key].target || detail.target || 60 } : null;
+    return key ? { key, target: tasks[key].target || 60 } : null;
+  }
+
+  function stopVideo(id) {
+    const timer = state.timers.get(id);
+    if (timer) clearInterval(timer);
+    state.timers.delete(id);
   }
 
   async function videoTick(mods, quest) {
     const task = videoTask(quest);
     if (!task) return;
-    const status = (quest.userStatus && quest.userStatus.progress && quest.userStatus.progress[task.key] && quest.userStatus.progress[task.key].value) || 0;
-    if (status >= task.target) {
-      log('video done ' + quest.id);
+    const current = taskValue(quest, task.key);
+    if (current >= task.target) {
+      log('video done ' + quest.id, 'ok');
       stopVideo(quest.id);
       return;
     }
+    const next = Math.min(task.target, current + VIDEO_STEP);
     try {
-      await mods.http.post({ url: '/quests/' + quest.id + '/video-progress', body: { timestamp: Math.min(task.target, status + VIDEO_STEP) } });
-      log('video ' + quest.id + ' ' + Math.min(task.target, status + VIDEO_STEP) + '/' + task.target);
+      await mods.http.post({ url: '/quests/' + quest.id + '/video-progress', body: { timestamp: next } });
+      log('video ' + next + '/' + task.target + ' s · ' + (quest.config && quest.config.messages && quest.config.messages.questName || quest.id));
+      state.quests = questList(mods);
+      render();
     } catch (err) {
-      log('video error: ' + err.message);
+      log('video error: ' + err.message, 'err');
       stopVideo(quest.id);
     }
   }
 
   function startVideo(mods, quest) {
-    if (state.videoTimers.has(quest.id)) return;
+    if (state.timers.has(quest.id)) return;
     videoTick(mods, quest);
-    state.videoTimers.set(quest.id, setInterval(() => videoTick(mods, quest), VIDEO_TICK));
+    state.timers.set(quest.id, setInterval(() => videoTick(mods, quest), VIDEO_TICK));
   }
 
-  function stopVideo(id) {
-    const timer = state.videoTimers.get(id);
-    if (timer) clearInterval(timer);
-    state.videoTimers.delete(id);
-  }
-
-  // A game quest only needs the client to believe a game is running; this is the
-  // same event Discord's own activities fire, with a stand-in app.
   function fakeGame() {
     const now = Date.now();
     return { id: '000000000000000000', name: 'Quest Activity', type: 0, createdAt: now, executables: [{ os: 'win32', name: 'Quest Activity', application_id: '000000000000000000' }], sessionId: 'dqc-' + now };
   }
 
   function gameTask(quest) {
-    const tasks = (quest.config && quest.config.taskConfig && quest.config.taskConfig.tasks) || {};
+    const tasks = tasksOf(quest);
     const key = Object.keys(tasks).find((k) => tasks[k] && /PLAY/.test(tasks[k].type));
     return key ? { key, target: tasks[key].target || 900 } : null;
   }
 
   function pulseGame(mods, quest) {
-    const task = gameTask(quest);
-    if (!task) return;
+    if (!gameTask(quest)) return;
     try {
       mods.dispatcher.dispatch({ type: 'RUNNING_GAMES_CHANGE', added: [fakeGame()], removed: [] });
     } catch (err) {
-      log('game dispatch failed: ' + err.message);
+      log('game dispatch failed: ' + err.message, 'err');
     }
   }
 
   async function run() {
     if (state.running) return;
     state.running = true;
-    state.lines = [];
     const panel = mount();
-    panel.querySelector('[data-start]').disabled = true;
-    panel.querySelector('[data-stop]').disabled = false;
-    log('looking for the client modules');
+    panel.querySelector('#dqc-start').disabled = true;
+    panel.querySelector('#dqc-stop').disabled = false;
+    log('looking for client modules');
     const mods = modules();
     if (!mods.store || !mods.http) {
-      log('modules not found: open discord.com/app and reload with the script enabled');
-      state.running = false;
-      panel.querySelector('[data-start]').disabled = false;
+      log('modules not found: reload the app (Ctrl+R) and paste again', 'err');
+      stop();
       return;
     }
     state.quests = questList(mods);
@@ -268,7 +317,7 @@
       if (videoTask(quest)) startVideo(mods, quest);
       if (gameTask(quest)) pulseGame(mods, quest);
     }
-    state.gameTimer = setInterval(() => {
+    state.pulse = setInterval(() => {
       for (const quest of state.quests) {
         if (quest.userStatus && quest.userStatus.completedAt) continue;
         if (gameTask(quest)) pulseGame(mods, quest);
@@ -276,23 +325,24 @@
       state.quests = questList(mods);
       render();
     }, 15000);
-    log('running: leave this tab open');
+    log('running: leave the app open', 'ok');
   }
 
   function stop() {
     state.running = false;
-    for (const id of Array.from(state.videoTimers.keys())) stopVideo(id);
-    if (state.gameTimer) clearInterval(state.gameTimer);
-    state.gameTimer = null;
+    for (const id of Array.from(state.timers.keys())) stopVideo(id);
+    if (state.pulse) clearInterval(state.pulse);
+    state.pulse = null;
     const panel = state.ui;
     if (panel) {
-      panel.querySelector('[data-start]').disabled = false;
-      panel.querySelector('[data-stop]').disabled = true;
+      panel.querySelector('#dqc-start').disabled = false;
+      panel.querySelector('#dqc-stop').disabled = true;
+      render();
     }
     log('stopped');
   }
 
   mount();
-  log(NAME + ' ' + VERSION + ' loaded · press Start');
+  log(NAME + ' ' + VERSION + ' ready · press Start', 'ok');
   window.addEventListener('beforeunload', stop);
 })();

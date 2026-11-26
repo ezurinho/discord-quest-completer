@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0 — 2026-11-26
+
+A panel worth looking at.
+
+- Header is a gradient bar with a logo tile, the version chip and three compact
+  buttons; the window is rounded, translucent and draggable by its header.
+- Every quest is a card with a type icon, a status pill (RUNNING / QUEUE / DONE) and a
+  gradient progress bar that reads `342 / 900 s · 38%` instead of a bare number.
+- The log is timestamped, colour-coded (ok / err) and capped at 140 rows.
+- The footer counts claimed quests and names the shortcut to reopen the panel.
 ## 1.1.0 — 2026-11-26
 
 A script for the console, not an extension.
