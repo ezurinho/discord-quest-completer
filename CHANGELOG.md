@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.6.1 — 2026-11-26
+
+The panel worked and the console filled with the client's own crash.
+
+- `TypeError: Cannot read properties of undefined (reading 'toLowerCase')` from
+  `setActiveIrProgressingPlayOnDesktopQuests`, thrown inside Discord's
+  `RUNNING_GAMES_CHANGE` handler four times a second as soon as a play quest was
+  completed. The handler lowercases fields of every running game; the stand-in carried
+  only the fields this repo knew about, so the first one it did not know was `undefined`
+  and every log line after it was noise.
+- The stand-in now carries `distributor`, `sku`, `shortcutName` and `version`, and is
+  wrapped in a `Proxy` that answers `''` for any other string field while leaving real
+  properties, methods and symbols alone. The client can lowercase whatever it likes.
+- A play quest with no application id is no longer ticked or announced: the stand-in had
+  nothing to be, so it never advanced and only made the log look busy. It shows
+  **NOT AUTOMATABLE** like the stream quests do.
+- The smoke suite asserts both: a known field is a string, an unknown one is `''`.
+
 ## 3.6.0 — 2026-11-26
 
 Six things the client was doing wrong, found by reading the run instead of the happy path.

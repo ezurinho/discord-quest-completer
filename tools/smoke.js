@@ -225,6 +225,9 @@ if (!start || !start.handlers.click || !start.handlers.click.length) failures.pu
   else {
     if (!Array.isArray(announced.games)) failures.push('the game event has no games array');
     else if (!announced.games.some((g) => String(g.id) === '999')) failures.push('the stand-in is missing from the games array');
+    // Discord lowercases game fields in its own handler; an undefined one throws there.
+    if (typeof announced.added[0].distributor !== 'string') failures.push('the stand-in has no distributor string');
+    if (announced.added[0].someFieldNobodySets !== '') failures.push('an unknown string field is not an empty string');
   }
   if (diag && diag.handlers.click) diag.handlers.click[0]();
   await new Promise((r) => setTimeout(r, 200));

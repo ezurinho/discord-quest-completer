@@ -82,6 +82,8 @@ is saved, so reloading during one does not restart the punishment.
   client builds, so some quests will not see it.
 - Expired quests are dropped from the list instead of being enrolled and 404ing; a
   completed quest stays until its reward is claimed.
+- A play quest with no application id shows **NOT AUTOMATABLE**: there is no process for
+  the client to match, so it cannot advance.
 
 ## Development
 

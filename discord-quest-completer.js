@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 3.6.0
+ * Discord Quest Completer 3.6.1
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '3.6.0';
+  const VERSION = '3.6.1';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -409,7 +409,10 @@
   // would promise work the client cannot do.
   function isSupported(task) {
     if (!task) return false;
-    if (task.type === 'VIDEO' || task.type === 'GAME') return true;
+    // A game without an application id has nothing to be: the stand-in would announce a
+    // process Discord cannot match to the quest, and it would sit at 0 % either way.
+    if (task.type === 'GAME') return Boolean(task.appId);
+    if (task.type === 'VIDEO') return true;
     // An activity only progresses while the client can key a call, so it is offered
     // only when that key can be built right now.
     return task.type === 'ACTIVITY' && Boolean(state.key);
@@ -682,10 +685,25 @@
       overlay: false,
       sandboxed: false,
       hidden: false,
-      isLauncher: false
+      isLauncher: false,
+      distributor: '',
+      sku: '',
+      shortcutName: '',
+      version: ''
     };
-    standIns.set(id, game);
-    return game;
+    // Discord's RUNNING_GAMES_CHANGE handler lowercases fields of its own game objects.
+    // A field we never set came back undefined and threw "reading 'toLowerCase'" inside
+    // the client, four times a second, on every completed game quest. Own properties are
+    // real; any other string field answers '' so the handler reads a name, not a crash.
+    const stand = new Proxy(game, {
+      get(target, prop, receiver) {
+        if (prop in target) return Reflect.get(target, prop, receiver);
+        if (typeof prop !== 'string' || prop === 'then' || prop === 'toJSON') return undefined;
+        return '';
+      }
+    });
+    standIns.set(id, stand);
+    return stand;
   }
 
   function dispatchGames(mods, added, removed) {

@@ -32,7 +32,8 @@ const invariants = [
   ['progress cannot outrun the clock', 'videoClock'],
   ['a blocked enrolment is not retried', 'enrollClosed'],
   ['an expired quest is dropped', 'isExpired'],
-  ['a selection is honoured mid-run', 'state.selected.has(quest.id)']
+  ['a selection is honoured mid-run', 'state.selected.has(quest.id)'],
+  ['the stand-in fills unknown string fields', 'new Proxy(game']
 ];
 for (const [name, needle] of invariants) {
   if (source.indexOf(needle) < 0) failures.push('regression: ' + name);
