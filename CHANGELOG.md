@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.0 — 2026-11-26
+
+It stops hanging, and it tells you where.
+
+- The 1.9.0 run died silently after `49 quests on this account`: `enroll` awaited a
+  request that Discord's client never settled while rate limited, so `run()` never
+  reached `running: leave the app open` and nothing else happened. Every request now
+  has a 25 s deadline.
+- `run()` is wrapped: a crash logs the message and the stack instead of vanishing, and
+  an `unhandledrejection` listener catches anything that escapes.
+- `taskOf` no longer throws on a quest without `config`, which is what an uncaught
+  rejection during the loop would have looked like.
+- Enrolment runs concurrently instead of one long serial chain.
+- Each quest logs its state as it is picked up: `Firefox Browser · VIDEO · 0/142`, so a
+  quiet panel now means a real reason, not a swallowed exception.
+
 ## 1.9.0 — 2026-11-26
 
 The cooldown survives a reload, and repeated strikes escalate.

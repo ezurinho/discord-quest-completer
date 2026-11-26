@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 1.9.0
+ * Discord Quest Completer 2.0.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,7 +9,7 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '1.9.0';
+  const VERSION = '2.0.0';
   // A real player posts fractional media time every 7-9.5 s; 5 s of video every
   // 900 ms was five times faster than the player it pretends to be.
   const VIDEO_MIN_MS = 7000;
@@ -90,7 +90,8 @@
     return raw instanceof Map ? Array.from(raw.values()) : Object.values(raw);
   }
   function configOf(quest) {
-    return (quest && quest.config && (quest.config.taskConfig || quest.config.taskConfigV2)) || {};
+    const config = (quest && quest.config) || {};
+    return config.taskConfig || config.taskConfigV2 || {};
   }
   function taskOf(quest) {
     const config = configOf(quest);
@@ -100,7 +101,9 @@
     const has = (needle) => keys.find((key) => key.indexOf(needle) >= 0);
     const key = has('PLAY') || has('STREAM') || has('VIDEO') || has('ACTIVITY') || has('WATCH') || keys[0];
     const type = has('PLAY') ? 'GAME' : has('VIDEO') || has('WATCH') ? 'VIDEO' : has('STREAM') ? 'STREAM' : has('ACTIVITY') ? 'ACTIVITY' : 'GAME';
-    const name = (quest.config.messages && quest.config.messages.questName) || (quest.config.application && quest.config.application.name) || quest.id;
+    const messages = (quest.config && quest.config.messages) || {};
+    const app = (quest.config && quest.config.application) || {};
+    const name = messages.questName || app.name || quest.id;
     return { key, name, type, target: Number(tasks[key] && tasks[key].target) || 0 };
   }
   function questValue(quest, key) {
@@ -112,12 +115,22 @@
   const traffic = { queue: [], busy: false, post: null };
   async function enqueue(url, body) {
     return new Promise((resolve, reject) => {
-      traffic.queue.push({ url, body, resolve, reject });
+      // Discord's client can swallow a call while rate limited and never settle it,
+      // which left run() waiting forever with no line in the log. Every request now
+      // has a deadline.
+      const timer = setTimeout(() => reject({ status: 0, message: 'request timed out' }), 25000);
+      const done = (fn, value) => { clearTimeout(timer); fn(value); };
+      traffic.queue.push({ url, body, resolve: (v) => done(resolve, v), reject: (e) => done(reject, e) });
       drain();
     });
   }
   async function drain() {
     if (traffic.busy) return;
+    if (!traffic.post) {
+      const pending = traffic.queue.splice(0);
+      pending.forEach((req) => req.reject({ status: 0, message: 'no http client' }));
+      return;
+    }
     traffic.busy = true;
     while (traffic.queue.length) {
       if (!state.running) { traffic.queue = []; break; }
@@ -439,6 +452,16 @@
   }
 
   async function run() {
+    try {
+      await runOnce();
+    } catch (err) {
+      log('crash: ' + errorText(err), 'err');
+      console.error('[dqc]', err);
+      stop();
+    }
+  }
+
+  async function runOnce() {
     if (state.running) return;
     const panel = mount();
     panel.querySelector('#dqc-start').disabled = true;
@@ -457,20 +480,20 @@
     state.quests = allQuests(mods);
     render();
     log(state.quests.length + ' quests on this account');
-    for (const quest of state.quests) {
-      if (quest.userStatus && quest.userStatus.completedAt) continue;
-      await enroll(quest);
-    }
+    const joining = state.quests.filter((quest) => !(quest.userStatus && quest.userStatus.completedAt));
+    await Promise.all(joining.map((quest) => enroll(quest)));
     state.quests = allQuests(mods);
     for (const quest of state.quests) {
       if (quest.userStatus && quest.userStatus.completedAt) continue;
       const task = taskOf(quest);
       if (!task) continue;
+      const value = questValue(quest, task.key);
       if (!quest.userStatus || !quest.userStatus.enrolledAt) {
         blocked.add(quest.id);
         log('not joined: ' + task.name, 'err');
         continue;
       }
+      log(task.name + ' · ' + task.type + ' · ' + value + '/' + task.target);
       if (task.type !== 'VIDEO') { fakeGame(quest.config && quest.config.application && quest.config.application.id); pulseGame(mods, quest, task); }
     }
     startVideos();
@@ -503,6 +526,11 @@
     }
     log('stopped');
   }
+
+  window.addEventListener('unhandledrejection', (event) => {
+    log('unhandled: ' + errorText(event.reason), 'err');
+    console.error('[dqc]', event.reason);
+  });
 
   mount();
   log(NAME + ' ' + VERSION + ' ready · press Start', 'ok');
