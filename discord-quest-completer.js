@@ -1,5 +1,5 @@
 /*
- * Discord Quest Completer 1.6.0
+ * Discord Quest Completer 1.7.0
  * Paste into the Discord app's DevTools console (Ctrl+Shift+I), press Enter, then Start.
  * https://github.com/ezurinho/discord-quest-completer
  *
@@ -9,9 +9,11 @@
 (() => {
   'use strict';
   const NAME = 'Quest Completer';
-  const VERSION = '1.6.0';
-  const VIDEO_STEP = 5;
-  const VIDEO_TICK = 900;
+  const VERSION = '1.7.0';
+  // A real player posts fractional media time every 7-9.5 s; 5 s of video every
+  // 900 ms was five times faster than the player it pretends to be.
+  const VIDEO_MIN_MS = 7000;
+  const VIDEO_MAX_MS = 9500;
   // Pasted twice? The old panel goes, not a second one: two copies would double
   // every progress request.
   const previous = document.getElementById('dqc-panel');
@@ -255,7 +257,7 @@
 
   // ---- work ------------------------------------------------------------
   // 5 s of video per 900 ms: the only honest ETA is that ratio, not a guess.
-  const SPEED = (VIDEO_STEP * 1000) / VIDEO_TICK;
+  const SPEED = 1;
   function etaText(value, target) {
     const left = Math.max(0, target - value);
     if (!left) return '';
@@ -327,7 +329,8 @@
       stopVideo(quest.id);
       return;
     }
-    const next = Math.min(task.target, current + VIDEO_STEP);
+    const step = (VIDEO_MIN_MS + Math.random() * (VIDEO_MAX_MS - VIDEO_MIN_MS)) / 1000;
+    const next = Math.min(task.target, Number((current + step).toFixed(6)));
     try {
       await enqueue('/quests/' + quest.id + '/video-progress', { timestamp: next });
       log(task.name + ' · ' + next + '/' + task.target + ' s');
@@ -350,23 +353,40 @@
 
   function startVideo(quest, task) {
     if (state.timers.has(quest.id)) return;
-    videoTick(quest, task);
-    state.timers.set(quest.id, setInterval(() => videoTick(quest, task), VIDEO_TICK));
+    const loop = async () => {
+      await videoTick(quest, task);
+      if (!state.timers.has(quest.id)) return;
+      const wait = VIDEO_MIN_MS + Math.random() * (VIDEO_MAX_MS - VIDEO_MIN_MS);
+      state.timers.set(quest.id, setTimeout(loop, wait));
+    };
+    state.timers.set(quest.id, setTimeout(loop, 400));
   }
 
   // The client believes a game is running when the store says so and the running
   // games event fired; both are needed, the event alone gets ignored by some quests.
+  // One stand-in per app, kept alive: Discord's own heartbeat reports progress every
+  // 60 s once the process is in RunningGameStore, so churning the pid only breaks it.
+  const standIns = new Map();
   function fakeGame(appId) {
+    const id = appId || '000000000000000000';
+    if (standIns.has(id)) return standIns.get(id);
     const now = Date.now();
-    return { pid: 1000 + Math.floor(Math.random() * 8000), id: appId || '000000000000000000', name: 'Quest Activity', start: now, createdAt: now };
+    const game = { pid: 1000 + Math.floor(Math.random() * 8000), id, name: 'Quest Activity', start: now, createdAt: now };
+    standIns.set(id, game);
+    return game;
   }
 
   function patchRunStore(mods) {
     const store = mods.runStore;
     if (!store || store.__dqcPatched || typeof store.getRunningGames !== 'function') return;
     const real = store.getRunningGames;
-    const fake = [fakeGame()];
-    store.getRunningGames = function () { return real.call(store).concat(fake); };
+    const realPid = store.getGameForPID;
+    store.getRunningGames = function () { return real.call(store).concat(Array.from(standIns.values())); };
+    if (typeof realPid === 'function') {
+      store.getGameForPID = function (pid) {
+        return Array.from(standIns.values()).find((game) => game.pid === pid) || realPid.call(store, pid);
+      };
+    }
     store.__dqcPatched = true;
   }
 
@@ -413,7 +433,7 @@
         continue;
       }
       if (task.type === 'VIDEO') startVideo(quest, task);
-      else pulseGame(mods, quest, task);
+      else { fakeGame(quest.config && quest.config.application && quest.config.application.id); pulseGame(mods, quest, task); }
     }
     state.pulse = setInterval(() => {
       state.quests = allQuests(mods);
@@ -425,7 +445,7 @@
       }
       render();
       if (!pending.length) stop();
-    }, 15000);
+    }, 60000);
     log('running: leave the app open', 'ok');
   }
 

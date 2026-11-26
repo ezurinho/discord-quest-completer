@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.7.0 — 2026-11-26
+
+Video progress at the speed a player actually posts it.
+
+- `video-progress` now runs on a randomised 7-9.5 s loop with six-decimal fractional
+  timestamps, which is Discord's own player cadence. The old loop posted 5 s of video
+  every 900 ms, five times faster than anything a browser does, and that is what
+  produced the 429s.
+- Game quests keep one stand-in process per app instead of a new pid every 15 s, and
+  `getGameForPID` is patched too, so Discord's own 60 s heartbeat can find it. The
+  dispatch now repeats every 60 s, matching the heartbeat.
+- ETA is real seconds again, since progress advances at real time.
+
 ## 1.6.0 — 2026-11-26
 
 Quests the account cannot join stop pretending they can.
